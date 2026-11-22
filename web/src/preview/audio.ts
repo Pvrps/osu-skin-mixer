@@ -108,6 +108,10 @@ export class PreviewAudio {
   play(names: string[]) {
     if (!this.enabled || !this.context || !this.gain) return;
 
+    // While the browser is holding sound back, anything started is not dropped but kept waiting, and would all
+    // go off at once on the click which lets sound through. So until then, nothing is started at all.
+    if (this.context.state !== "running") return;
+
     for (const name of names) {
       const buffer = this.samples.get(name);
 
