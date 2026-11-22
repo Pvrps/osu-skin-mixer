@@ -6,11 +6,13 @@ export interface Selection {
   /** The skin every category comes from unless overridden. */
   base: string | null;
   overrides: Partial<Record<CategoryId, string>>;
+  /** Individual elements taken from a different skin than the rest of their category. */
+  elements: Partial<Record<CategoryId, Record<string, string>>>;
   /** Manual skin.ini values, keyed as `Section.Key`. These win over everything else. */
   ini: Record<string, string>;
 }
 
-export const EMPTY_SELECTION: Selection = { base: null, overrides: {}, ini: {} };
+export const EMPTY_SELECTION: Selection = { base: null, overrides: {}, elements: {}, ini: {} };
 
 export interface MixFile {
   name: string;
@@ -44,6 +46,14 @@ export function sourceFor(selection: Selection, category: CategoryId, skins: Map
   return overridden ?? (selection.base ? (skins.get(selection.base) ?? null) : null);
 }
 
+/** The skin a single element comes from: its own override if it has one, otherwise its category's skin. */
+export function elementSourceFor(selection: Selection, category: CategoryId, element: string, skins: Map<string, Skin>): Skin | null {
+  const override = selection.elements[category]?.[element];
+  const overridden = override ? skins.get(override) : undefined;
+
+  return overridden ?? sourceFor(selection, category, skins);
+}
+
 const lowerName = (name: string) => name.replace(/\\/g, "/").toLowerCase();
 
 /**
@@ -65,8 +75,25 @@ export function computeMix(sources: Skin[], selection: Selection, mixName: strin
   const files = new Map<string, MixFile>();
 
   for (const category of CATEGORIES) {
-    for (const file of categoriesOf(chosen.get(category.id)!).get(category.id)!) {
-      files.set(lowerName(file.name), { name: file.name, hash: file.hash });
+    const source = chosen.get(category.id)!;
+
+    // Elements which were pointed at another skin, leaving out any which point at a skin that has since gone.
+    const replaced = new Map<string, Skin>();
+
+    for (const [element, skinId] of Object.entries(selection.elements[category.id] ?? {})) {
+      const skin = byId.get(skinId);
+      if (skin && skin !== source) replaced.set(element, skin);
+    }
+
+    for (const file of categoriesOf(source).get(category.id)!) {
+      if (!replaced.has(file.element)) files.set(lowerName(file.name), { name: file.name, hash: file.hash });
+    }
+
+    // A replaced element is taken whole: if the other skin doesn't have it, the game's default shows instead.
+    for (const [element, skin] of replaced) {
+      for (const file of categoriesOf(skin).get(category.id)!) {
+        if (file.element === element) files.set(lowerName(file.name), { name: file.name, hash: file.hash });
+      }
     }
   }
 

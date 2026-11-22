@@ -213,6 +213,19 @@ export interface EmittedFile {
   name: string;
   hash: string;
   source: SkinFile;
+  /**
+   * The element this file is part of. All the files which make up one thing in game (its `@2x` version, the frames
+   * of its animation) share an element, and are always taken from the same skin together.
+   */
+  element: string;
+}
+
+/** Animation frames are numbered `name-0`, `name-1`, ... except for the slider ball, which has no separator. */
+function elementOfStem(stem: string, isImage: boolean): string {
+  if (!isImage) return stem;
+  if (/^sliderb\d+$/.test(stem)) return "sliderb";
+
+  return stem.replace(/-\d+$/, "");
 }
 
 const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -244,6 +257,8 @@ export function categorise(skin: Skin): Map<CategoryId, EmittedFile[]> {
         name: `${category.font.outPrefix}-${match[1]}${file.hd ? "@2x" : ""}.${file.ext}`,
         hash: file.hash,
         source: file,
+        // Each glyph is its own element, named for where it ends up so it lines up across skins.
+        element: `${category.font.outPrefix}-${match[1]}`,
       });
     }
   }
@@ -254,7 +269,7 @@ export function categorise(skin: Skin): Map<CategoryId, EmittedFile[]> {
     // The configuration is always regenerated for the mix.
     if (file.root && file.stem === "skin" && file.ext === "ini") continue;
 
-    result.get(classify(file))!.push({ name: file.name, hash: file.hash, source: file });
+    result.get(classify(file))!.push({ name: file.name, hash: file.hash, source: file, element: elementOfStem(file.stem, IMAGE_EXTS.has(file.ext)) });
   }
 
   return result;

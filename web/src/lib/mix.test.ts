@@ -25,11 +25,11 @@ describe("ini", () => {
 
 describe("computeMix", () => {
   it("needs a base", () => {
-    expect(computeMix([a, b], { base: null, overrides: {}, ini: {} }, "mix")).toBeNull();
+    expect(computeMix([a, b], { base: null, overrides: {}, elements: {}, ini: {} }, "mix")).toBeNull();
   });
 
   it("reproduces the base skin, with fonts moved to their own prefixes", () => {
-    const mix = computeMix([a, b], { base: "a", overrides: {}, ini: {} }, "mix")!;
+    const mix = computeMix([a, b], { base: "a", overrides: {}, elements: {}, ini: {} }, "mix")!;
     const names = mix.files.map((f) => f.name);
 
     expect(names).not.toContain("skin.ini");
@@ -49,7 +49,7 @@ describe("computeMix", () => {
   });
 
   it("takes a category's files and settings from its override, and nothing else", () => {
-    const mix = computeMix([a, b], { base: "a", overrides: { cursor: "b", numbers: "b" }, ini: { "Colours.SliderBorder": "1,1,1" } }, "mix")!;
+    const mix = computeMix([a, b], { base: "a", overrides: { cursor: "b", numbers: "b" }, elements: {}, ini: { "Colours.SliderBorder": "1,1,1" } }, "mix")!;
     const byName = new Map(mix.files.map((f) => [f.name, f.hash]));
 
     expect(byName.get("cursor.png")).toBe("b:cursor.png");
@@ -68,7 +68,7 @@ describe("computeMix", () => {
 
   it("blanks every element of a category set to none", () => {
     const none = buildNoneSkin([a, b], new Set(["cursormiddle@2x.png", "spinnerbonus.wav", "menu-button@2x.png"]), { png: "P", wav: "W" });
-    const mix = computeMix([a, b, none], { base: "a", overrides: { cursor: NONE_ID, hitsounds: NONE_ID, numbers: NONE_ID }, ini: {} }, "mix")!;
+    const mix = computeMix([a, b, none], { base: "a", overrides: { cursor: NONE_ID, hitsounds: NONE_ID, numbers: NONE_ID }, elements: {}, ini: {} }, "mix")!;
     const byName = new Map(mix.files.map((f) => [f.name, f.hash]));
 
     // Elements from any skin and from the built-in skin are covered, so nothing can show through.
@@ -82,8 +82,33 @@ describe("computeMix", () => {
     expect(iniValue(mix.ini, "General", "CursorRotate")).toBeUndefined();
   });
 
+  it("takes single elements from another skin, every file of them", () => {
+    const c = skin("c", "", ["cursor.png", "cursortrail.png", "hit300-0.png", "hit300-1@2x.png", "hit100.png", "normal-hitnormal.ogg"]);
+    const d = skin("d", "", ["cursor@2x.png", "cursortrail.png", "hit300.png", "hit100.png", "normal-hitnormal.wav", "normal-hitclap.wav"]);
+    const mix = computeMix(
+      [c, d],
+      { base: "c", overrides: {}, elements: { cursor: { cursor: "d" }, judgement: { hit300: "d" }, hitsounds: { "normal-hitnormal": "d", "normal-hitclap": "d" } }, ini: {} },
+      "mix",
+    )!;
+    const byName = new Map(mix.files.map((f) => [f.name, f.hash]));
+
+    expect(byName.get("cursor@2x.png")).toBe("d:cursor@2x.png");
+    expect(byName.has("cursor.png")).toBe(false);
+    expect(byName.get("cursortrail.png")).toBe("c:cursortrail.png");
+
+    // The animation is replaced as a whole, so no stray frames are left to take priority over the still image.
+    expect(byName.get("hit300.png")).toBe("d:hit300.png");
+    expect(byName.has("hit300-0.png")).toBe(false);
+    expect(byName.has("hit300-1@2x.png")).toBe(false);
+    expect(byName.get("hit100.png")).toBe("c:hit100.png");
+
+    expect(byName.get("normal-hitnormal.wav")).toBe("d:normal-hitnormal.wav");
+    expect(byName.has("normal-hitnormal.ogg")).toBe(false);
+    expect(byName.get("normal-hitclap.wav")).toBe("d:normal-hitclap.wav");
+  });
+
   it("recognises an already applied mix", () => {
-    const selection = { base: "a", overrides: { cursor: "b" as const }, ini: {} };
+    const selection = { base: "a", overrides: { cursor: "b" as const }, elements: {}, ini: {} };
     const mix = computeMix([a, b], selection, "mix")!;
     const applied = mixAsSkin(mix, "mix");
 

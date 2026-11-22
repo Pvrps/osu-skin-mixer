@@ -15,9 +15,12 @@ Then open <http://127.0.0.1:5727>. On NixOS the script enters the flake's dev sh
 the .NET 10 SDK and Node 22.
 
 1. Pick a base skin. The mix starts out as a copy of it.
-2. Pick a category on the left, hover a skin's card to try its version in the preview, click to use it.
-3. Press **Apply to skin**. The mix skin is created if it does not exist yet.
-4. In osu!, select the mix skin. After later changes, switch to another skin and back: lazer does not reload a
+2. Pick a category on the left. Each row is one element (an image with its `@2x` version and animation frames,
+   or one sample) and each column a skin. Click a skin's name to use it for the whole category, or a single cell
+   to take just that element from that skin. Hovering tries it in the preview.
+3. Under **skin.ini overrides**, set any `Section.Key` yourself. These win over whatever the chosen skins say.
+4. Press **Apply to skin**. The mix skin is created if it does not exist yet.
+5. In osu!, select the mix skin. After later changes, switch to another skin and back: lazer does not reload a
    skin's files while it is selected.
 
 ## How it works
@@ -29,7 +32,7 @@ lazer keeps skins in its Realm database (`client.realm`) as lists of filename �
 - A copy of `client.realm` is saved to the state directory before every apply (newest three are kept).
 - Font glyphs are stored under `mixfonts/` in the mix so number fonts from different skins cannot clash.
 - HUD layouts you edit in lazer's own skin editor while on the mix skin are kept across applies.
-- Any category except combo colours and the interface can be set to **None**, which fills it with invisible 1×1
+- Any category or single element, except combo colours and the interface, can be set to **None**, which fills it with invisible 1×1
   images or silent samples so nothing shows through from the game's built-in skin.
 - Elements a skin leaves out fall back to lazer's classic skin, in the preview as in the game. Those images are
   downloaded from [ppy/osu-resources](https://github.com/ppy/osu-resources) the first time they are needed.

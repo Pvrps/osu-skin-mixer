@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AssetBrowser } from "./components/AssetBrowser";
+import { ElementGrid } from "./components/ElementGrid";
+import { IniEditor } from "./components/IniEditor";
 import { IniPanel } from "./components/IniPanel";
 import { Preview } from "./components/Preview";
 import { applyMix, fetchDefaultIndex, fetchState, saveSelection } from "./lib/api";
 import { CATEGORIES, CATEGORY_BY_ID, type CategoryId } from "./lib/categories";
-import { type Selection, computeMix, isApplied, mixAsSkin, sourceFor } from "./lib/mix";
+import { type Selection, computeMix, elementSourceFor, isApplied, mixAsSkin, sourceFor } from "./lib/mix";
 import { type BlankHashes, NONE_ID, buildNoneSkin, canBeNone } from "./lib/none";
 import { type Skin, loadSkin } from "./lib/skins";
 
@@ -18,26 +19,43 @@ interface Loaded {
 
 type Status = { kind: "idle" } | { kind: "applying" } | { kind: "applied"; created: boolean } | { kind: "error"; message: string };
 
+/** What the lower half of the page is showing: one category's elements, or the skin.ini overrides. */
+type View = CategoryId | "ini";
+
+interface Hover {
+  skinId: string;
+  /** The single element being tried, or null when trying a skin for the whole category. */
+  element: string | null;
+}
+
 const GROUPS = ["Gameplay", "HUD", "Audio", "Everything else"] as const;
 
 /** Drops anything in a saved selection which refers to a skin that no longer exists. */
 function sanitise(saved: Partial<Selection> | null, sources: Skin[]): Selection {
   const known = new Set(sources.map((s) => s.id));
+  const usable = (category: string, skinId: unknown): skinId is string =>
+    CATEGORY_BY_ID.has(category as CategoryId) && typeof skinId === "string" && (known.has(skinId) || (skinId === NONE_ID && canBeNone(category as CategoryId)));
+
   const overrides: Selection["overrides"] = {};
 
   for (const [category, skinId] of Object.entries(saved?.overrides ?? {})) {
-    if (!CATEGORY_BY_ID.has(category as CategoryId) || typeof skinId !== "string") continue;
+    if (usable(category, skinId)) overrides[category as CategoryId] = skinId;
+  }
 
-    if (known.has(skinId) || (skinId === NONE_ID && canBeNone(category as CategoryId))) overrides[category as CategoryId] = skinId;
+  const elements: Selection["elements"] = {};
+
+  for (const [category, chosen] of Object.entries(saved?.elements ?? {})) {
+    const kept = Object.fromEntries(Object.entries(chosen ?? {}).filter(([, skinId]) => usable(category, skinId)));
+    if (Object.keys(kept).length > 0) elements[category as CategoryId] = kept;
   }
 
   const ini: Record<string, string> = {};
 
   for (const [path, value] of Object.entries(saved?.ini ?? {})) {
-    if (typeof value === "string") ini[path] = value;
+    if (typeof value === "string" && path.includes(".")) ini[path] = value;
   }
 
-  return { base: saved?.base && known.has(saved.base) ? saved.base : null, overrides, ini };
+  return { base: saved?.base && known.has(saved.base) ? saved.base : null, overrides, elements, ini };
 }
 
 async function load(): Promise<{ loaded: Loaded; selection: Selection }> {
@@ -51,13 +69,16 @@ async function load(): Promise<{ loaded: Loaded; selection: Selection }> {
   };
 }
 
+const countElements = (selection: Selection, category?: CategoryId) =>
+  Object.entries(selection.elements).reduce((total, [id, chosen]) => total + (category === undefined || category === id ? Object.keys(chosen ?? {}).length : 0), 0);
+
 export function App() {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [defaults, setDefaults] = useState<Set<string> | null>(null);
   const [selection, setSelection] = useState<Selection | null>(null);
-  const [category, setCategory] = useState<CategoryId>("cursor");
-  const [hover, setHover] = useState<string | null>(null);
+  const [view, setView] = useState<View>("cursor");
+  const [hover, setHover] = useState<Hover | null>(null);
   const [status, setStatus] = useState<Status>({ kind: "idle" });
 
   useEffect(() => {
@@ -116,20 +137,33 @@ export function App() {
     [loaded, selection, mixable],
   );
 
-  // Hovering a skin's card shows what the mix would look like with it, without committing to anything.
+  // The selection as it would be if whatever is being hovered were clicked, or null if that changes nothing.
+  const trial = useMemo((): Selection | null => {
+    if (!selection || !hover || view === "ini") return null;
+
+    if (hover.element === null) {
+      if (hover.skinId === sourceFor(selection, view, skinsById)?.id && countElements(selection, view) === 0) return null;
+
+      const { [view]: _, ...elements } = selection.elements;
+      return { ...selection, overrides: { ...selection.overrides, [view]: hover.skinId }, elements };
+    }
+
+    if (hover.skinId === elementSourceFor(selection, view, hover.element, skinsById)?.id) return null;
+
+    return { ...selection, elements: { ...selection.elements, [view]: { ...selection.elements[view], [hover.element]: hover.skinId } } };
+  }, [selection, hover, view, skinsById]);
+
+  // Hovering shows what the mix would look like, without committing to anything.
   const previewSkin = useMemo(() => {
-    if (!loaded || !selection) return null;
+    if (!loaded) return null;
 
-    const shown =
-      hover && hover !== sourceFor(selection, category, skinsById)?.id
-        ? computeMix(mixable, { ...selection, overrides: { ...selection.overrides, [category]: hover } }, loaded.mixName, loaded.mix)
-        : mix;
-
+    const shown = trial ? computeMix(mixable, trial, loaded.mixName, loaded.mix) : mix;
     return shown ? mixAsSkin(shown, loaded.mixName) : null;
-  }, [loaded, selection, hover, category, skinsById, mix, mixable]);
+  }, [loaded, trial, mix, mixable]);
 
   // Until the list of built-in elements has arrived, a "none" in the selection can't be resolved, so hold off judging.
-  const usesNone = selection !== null && Object.values(selection.overrides).includes(NONE_ID);
+  const usesNone =
+    selection !== null && (Object.values(selection.overrides).includes(NONE_ID) || Object.values(selection.elements).some((chosen) => Object.values(chosen ?? {}).includes(NONE_ID)));
   const dirty = mix !== null && (!usesNone || noneSkin !== null) && !isApplied(mix, loaded?.mix);
 
   const update = (change: (s: Selection) => Selection) => {
@@ -137,14 +171,28 @@ export function App() {
     setStatus((s) => (s.kind === "applying" ? s : { kind: "idle" }));
   };
 
-  const choose = (categoryId: CategoryId, skinId: string) =>
+  /** Uses one skin for a whole category, dropping any element-by-element choices made within it. */
+  const chooseCategory = (categoryId: CategoryId, skinId: string) =>
     update((s) => {
       const overrides = { ...s.overrides };
+      const { [categoryId]: _, ...elements } = s.elements;
 
       if (skinId === s.base) delete overrides[categoryId];
       else overrides[categoryId] = skinId;
 
-      return { ...s, overrides };
+      return { ...s, overrides, elements };
+    });
+
+  const chooseElement = (categoryId: CategoryId, element: string, skinId: string) =>
+    update((s) => {
+      const chosen = { ...s.elements[categoryId] };
+
+      // Picking the category's own skin just means the element is no longer an exception.
+      if (skinId === sourceFor(s, categoryId, skinsById)?.id) delete chosen[element];
+      else chosen[element] = skinId;
+
+      const { [categoryId]: _, ...elements } = s.elements;
+      return { ...s, elements: Object.keys(chosen).length > 0 ? { ...elements, [categoryId]: chosen } : elements };
     });
 
   const setBase = (skinId: string) =>
@@ -225,10 +273,18 @@ export function App() {
     );
   }
 
-  const current = CATEGORY_BY_ID.get(category)!;
-  const currentSource = sourceFor(selection, category, skinsById);
-  const overrideCount = Object.keys(selection.overrides).length + Object.keys(selection.ini).length;
-  const hoverName = hover && hover !== currentSource?.id ? skinsById.get(hover)?.name : null;
+  const current = view === "ini" ? null : CATEGORY_BY_ID.get(view)!;
+  const iniCount = Object.keys(selection.ini).length;
+  const changeCount = Object.keys(selection.overrides).length + countElements(selection) + iniCount;
+
+  let note: string | null = null;
+
+  if (trial && hover && current) {
+    const name = skinsById.get(hover.skinId)?.name;
+    const what = hover.element === null ? current.label.toLowerCase() : current.font ? `${current.label.toLowerCase()} "${hover.element.split("-").pop()}"` : hover.element;
+
+    note = hover.skinId === NONE_ID ? `Trying without ${what}` : `Trying ${what} from ${name}`;
+  }
 
   return (
     <div className="app">
@@ -246,7 +302,7 @@ export function App() {
           </select>
         </label>
 
-        <button className="quiet" disabled={overrideCount === 0} onClick={() => update((s) => ({ ...s, overrides: {}, ini: {} }))}>
+        <button className="quiet" disabled={changeCount === 0} onClick={() => update((s) => ({ ...s, overrides: {}, elements: {}, ini: {} }))}>
           Reset to base
         </button>
 
@@ -260,7 +316,8 @@ export function App() {
               {status.created ? `Created "${loaded.mixName}".` : `Updated "${loaded.mixName}".`} In osu!, switch to another skin and back to see it.
             </>
           )}
-          {status.kind === "idle" && (dirty ? (loaded.mix ? "Changes not applied yet" : `"${loaded.mixName}" will be created`) : `"${loaded.mixName}" is up to date`)}
+          {(status.kind === "idle" || (status.kind === "applied" && dirty)) &&
+            (dirty ? (loaded.mix ? "Changes not applied yet" : `"${loaded.mixName}" will be created`) : `"${loaded.mixName}" is up to date`)}
         </div>
 
         <button className="primary" disabled={!dirty || status.kind === "applying"} onClick={() => void apply()}>
@@ -275,51 +332,82 @@ export function App() {
             {CATEGORIES.filter((c) => c.group === group).map((c) => {
               const source = sourceFor(selection, c.id, skinsById);
               const overridden = selection.overrides[c.id] !== undefined;
+              const exceptions = countElements(selection, c.id);
 
               return (
                 <button
                   key={c.id}
-                  className={`category${c.id === category ? " active" : ""}`}
+                  className={`category${c.id === view ? " active" : ""}`}
                   style={{ "--skin": source ? colourOf(source.id) : "transparent" } as React.CSSProperties}
                   onClick={() => {
-                    setCategory(c.id);
+                    setView(c.id);
                     setHover(null);
                   }}
                 >
                   <span className="category-label">{c.label}</span>
                   <span className={`category-source${overridden ? " overridden" : ""}`}>
                     <span className="dot" />
-                    {source?.name}
+                    <span className="category-source-name">{source?.name}</span>
+                    {exceptions > 0 && <span className="mixed">+{exceptions} mixed</span>}
                   </span>
                 </button>
               );
             })}
           </section>
         ))}
+
+        <section>
+          <h2>Configuration</h2>
+          <button
+            className={`category${view === "ini" ? " active" : ""}`}
+            onClick={() => {
+              setView("ini");
+              setHover(null);
+            }}
+          >
+            <span className="category-label">skin.ini overrides</span>
+            <span className="category-source">{iniCount === 0 ? "None set" : `${iniCount} value${iniCount === 1 ? "" : "s"} set`}</span>
+          </button>
+        </section>
       </nav>
 
       <main>
-        <Preview skin={previewSkin} defaults={defaults} note={hoverName ? `Trying ${current.label.toLowerCase()} from ${hoverName}` : null} />
+        <Preview skin={previewSkin} defaults={defaults} note={note} />
 
-        <div className="browser">
-          <div className="browser-head">
-            <h2>{current.label}</h2>
-            <span className="muted">{current.hint}. Hover a skin to try it, click to use it.</span>
+        {current ? (
+          <div className="browser">
+            <div className="browser-head">
+              <h2>{current.label}</h2>
+              <span className="muted">
+                {current.hint}. Click a skin's name to use it for all of these, or a single cell to take just that element. Hover to try.
+              </span>
+            </div>
+            <div className="browser-body">
+              <ElementGrid
+                key={current.id}
+                category={current}
+                skins={loaded.sources}
+                none={canBeNone(current.id) ? noneSkin : null}
+                categorySource={sourceFor(selection, current.id, skinsById)?.id ?? null}
+                elementSources={selection.elements[current.id] ?? {}}
+                base={selection.base}
+                colourOf={colourOf}
+                onSelectCategory={(skinId) => chooseCategory(current.id, skinId)}
+                onSelectElement={(element, skinId) => chooseElement(current.id, element, skinId)}
+                onHover={setHover}
+              />
+              <IniPanel category={current} inherited={inherited} overrides={selection.ini} onChange={setIni} />
+            </div>
           </div>
-          <div className="browser-body">
-            <AssetBrowser
-              category={current}
-              skins={loaded.sources}
-              none={canBeNone(category) ? noneSkin : null}
-              selected={currentSource?.id ?? null}
-              base={selection.base}
-              colourOf={colourOf}
-              onSelect={(skinId) => choose(category, skinId)}
-              onHover={setHover}
-            />
-            <IniPanel category={current} inherited={inherited} overrides={selection.ini} onChange={setIni} />
+        ) : (
+          <div className="browser">
+            <div className="browser-head">
+              <h2>skin.ini overrides</h2>
+              <span className="muted">Set any skin.ini value yourself, whatever the skins you picked say.</span>
+            </div>
+            <IniEditor result={mix?.ini ?? []} inherited={inherited} overrides={selection.ini} onChange={setIni} />
           </div>
-        </div>
+        )}
       </main>
     </div>
   );
