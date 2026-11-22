@@ -50,6 +50,26 @@ jobs:
         shell: bash
         run: dotnet publish server -c Release -r "${{ matrix.runtime }}" -o app/server -p:Version="${GITHUB_REF_NAME#v}" --nologo
 
+      # A server which can't start, or has no interface in it, is caught here rather than by whoever downloads it.
+      # Each system builds its own, and one being right says nothing for the others.
+      - name: Check that the server starts and serves the interface
+        shell: bash
+        run: |
+          export PORT=5727 MIXER_STATE_DIR="$RUNNER_TEMP/mixer-state" OSU_DIR="$RUNNER_TEMP/no-osu"
+
+          app/server/osu-skin-mixer-server --no-open &
+          server=$!
+
+          for _ in $(seq 1 30); do
+            curl -sf "http://127.0.0.1:$PORT/api/ping" > /dev/null && break
+            sleep 1
+          done
+
+          page="$(curl -sf "http://127.0.0.1:$PORT/")"
+          kill "$server"
+
+          grep -q '<div id="root">' <<< "$page"
+
       # An AppImage on Linux, a portable .exe on Windows and a .dmg on macOS, each with everything inside it.
       - name: Build the app
         working-directory: app

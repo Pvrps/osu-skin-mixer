@@ -34,9 +34,15 @@
     <PackageReference Include="Realm" Version="20.1.0" />
   </ItemGroup>
 
-  <!-- The built UI travels inside the executable. Without one (a fresh checkout), WEB_ROOT says where to find it. -->
+  <!--
+    The built UI travels inside the executable. Without one (a fresh checkout), WEB_ROOT says where to find it.
+
+    The folder is joined on with whatever the system doing the build separates folders with, as the step which
+    packs the files only understands that one. Written with a forward slash, a build made on Windows packs the
+    files under no folder at all, where the server can't find them and won't start.
+  -->
   <ItemGroup Condition="Exists('../web/dist/index.html')">
-    <EmbeddedResource Include="../web/dist/**" Link="wwwroot/%(RecursiveDir)%(Filename)%(Extension)" />
+    <EmbeddedResource Include="../web/dist/**" Link="wwwroot$([System.IO.Path]::DirectorySeparatorChar)%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
 
 </Project>
