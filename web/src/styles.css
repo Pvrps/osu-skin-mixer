@@ -347,6 +347,41 @@ input::placeholder {
   border-color: var(--accent);
 }
 
+.update {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: var(--accent-soft);
+  padding-left: 12px;
+  white-space: nowrap;
+}
+
+.update a {
+  color: var(--text);
+  text-decoration: none;
+  padding: 4px 0;
+}
+
+.update a:hover {
+  color: var(--accent);
+}
+
+.update .update-dismiss {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 2px 9px 3px 7px;
+  font-size: 15px;
+  line-height: 1;
+  border-radius: 0 999px 999px 0;
+}
+
+.update .update-dismiss:hover {
+  color: var(--text);
+}
+
 .status {
   color: var(--muted);
   text-align: right;

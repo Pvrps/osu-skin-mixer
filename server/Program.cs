@@ -58,6 +58,7 @@ var store = createStore();
 var defaults = new DefaultSkinCache(Path.Combine(stateDir, "default-skin"));
 var contentTypes = new FileExtensionContentTypeProvider();
 var sessions = new Sessions(app.Lifetime, exitWhenClosed: open);
+var updates = new Updates();
 string selectionPath = Path.Combine(stateDir, "selection.json");
 
 // For finding out what the interface is asking for, when something isn't showing up.
@@ -151,6 +152,9 @@ object state() => new
     skins = hasDatabase(osuDir) ? store.GetSkins() : [],
     selection = File.Exists(selectionPath) ? JsonSerializer.Deserialize<JsonElement>(File.ReadAllText(selectionPath)) : (JsonElement?)null,
 };
+
+// Whether there is a newer release to tell the user about. The version is null when there isn't.
+app.MapGet("/api/update", async () => new { version = await updates.Newer(), url = Updates.DOWNLOAD_URL });
 
 // For installs which aren't in one of the usual places: the user says where osu!'s data is, and it is remembered.
 app.MapPost("/api/location", (LocationRequest request) =>

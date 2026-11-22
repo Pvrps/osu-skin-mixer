@@ -7,6 +7,7 @@ import { Navigator, type Target } from "./components/Navigator";
 import { Onboarding } from "./components/Onboarding";
 import { Preview } from "./components/Preview";
 import { Locate } from "./components/Locate";
+import { UpdateNotice } from "./components/UpdateNotice";
 import { applyMix, fetchDefaultIndex, fetchState, saveSelection } from "./lib/api";
 import { CATEGORY_BY_ID, type CategoryId } from "./lib/categories";
 import { buildIndex, labelOf } from "./lib/elements";
@@ -363,6 +364,8 @@ export function App() {
         />
 
         <div className="spacer" />
+
+        <UpdateNotice />
 
         <div className={`status ${status.kind}`} role="status">
           {status.kind === "error" && `Couldn't apply: ${status.message}`}

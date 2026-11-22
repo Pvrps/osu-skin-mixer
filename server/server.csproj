@@ -6,7 +6,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>OsuSkinMixer</RootNamespace>
     <AssemblyName>osu-skin-mixer-server</AssemblyName>
-    <Version>0.1.0</Version>
+    <!-- A build from source has no version. A release is given its own, from its tag, when it is built. -->
+    <Version>0.0.0</Version>
     <InvariantGlobalization>true</InvariantGlobalization>
     <GenerateEmbeddedFilesManifest>true</GenerateEmbeddedFilesManifest>
     <!-- The UI is embedded by hand below, so none of the web SDK's own asset handling is wanted. -->

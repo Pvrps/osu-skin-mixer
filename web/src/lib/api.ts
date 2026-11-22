@@ -73,6 +73,18 @@ export const saveSelection = (selection: Selection) => request<void>("/api/selec
 export const applyMix = (name: string, skinId: string | null, files: { name: string; hash: string }[], skinIni: string) =>
   request<ApplyResult>("/api/apply", json("POST", { name, skinId, files, skinIni }));
 
+/** A release of the mixer newer than the one running, and where to get it. */
+export interface Update {
+  version: string;
+  url: string;
+}
+
+/** Null when this is the latest release, and when that can't be told. */
+export const fetchUpdate = () =>
+  request<{ version: string | null; url: string }>("/api/update")
+    .then((update) => (update.version ? ({ version: update.version, url: update.url } satisfies Update) : null))
+    .catch(() => null);
+
 /** Names of the classic skin's files. Empty when they cannot be fetched, in which case the preview goes without. */
 export const fetchDefaultIndex = () =>
   request<string[]>("/api/default/index")

@@ -21,6 +21,8 @@ It works with osu!lazer, the osu! (standard) game mode.
 4. Click **Create skin**. Your skin now shows up in osu!'s skin list.
 5. After more changes, click **Apply**. Refresh the skin in osu! to see them.
 
+When a newer version is out, the mixer says so at the top of its window, with a link to download it.
+
 ## Options
 
 You don't need any of these for normal use.
@@ -29,6 +31,7 @@ You don't need any of these for normal use.
 | --- | --- |
 | `OSU_DIR` | Environment variable. The folder osu! keeps its data in. |
 | `MIXER_STATE_DIR` | Environment variable. The folder the mixer keeps its own data in. |
+| `MIXER_NO_UPDATE_CHECK` | Environment variable. Set to `1` to stop the mixer asking GitHub whether a newer version is out. |
 
 Where things are kept:
 
@@ -62,7 +65,7 @@ just check    # type check the interface
 ## Limits
 
 - The preview is close to the game but not identical.
-- The Windows and macOS versions have not been tested yet.
+- The macOS version has not been tested yet.
 - The macOS version only runs on Macs with an Apple chip (M1 or newer), not older Intel ones.
 - The first time you run it, it downloads osu!'s built-in skin so it can show default elements. That needs
   an internet connection once.
