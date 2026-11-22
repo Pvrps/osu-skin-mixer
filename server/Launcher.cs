@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
+using OsuSkinMixer.Platforms;
 
 namespace OsuSkinMixer;
 
@@ -14,18 +15,6 @@ public static class Launcher
 
     /// <summary>What the mixer answers a ping with, so a second copy can tell the first is already running.</summary>
     public const string PING_REPLY = "osu-skin-mixer";
-
-    private static readonly string[] app_window_browsers_windows =
-    [
-        @"Microsoft\Edge\Application\msedge.exe",
-        @"Google\Chrome\Application\chrome.exe",
-        @"BraveSoftware\Brave-Browser\Application\brave.exe",
-    ];
-
-    private static readonly string[] app_window_browsers_unix =
-    [
-        "chromium", "chromium-browser", "google-chrome-stable", "google-chrome", "brave", "brave-browser", "microsoft-edge", "microsoft-edge-stable",
-    ];
 
     public static bool IsPortFree(int port)
     {
@@ -66,34 +55,12 @@ public static class Launcher
     /// Shows the mixer: in a window of its own where a browser which can do that is installed, and otherwise as a
     /// tab in the default browser.
     /// </summary>
-    public static void Open(string url, bool preferWindow)
+    public static void Open(Platform platform, string url, bool preferWindow)
     {
-        if (preferWindow && findAppWindowBrowser() is string browser && start(browser, $"--app={url}", "--new-window", "--autoplay-policy=no-user-gesture-required"))
+        if (preferWindow && platform.FindAppWindowBrowser() is string browser && start(browser, $"--app={url}", "--new-window", "--autoplay-policy=no-user-gesture-required"))
             return;
 
-        if (OperatingSystem.IsWindows())
-            start(new ProcessStartInfo(url) { UseShellExecute = true });
-        else
-            start(OperatingSystem.IsMacOS() ? "open" : "xdg-open", url);
-    }
-
-    private static string? findAppWindowBrowser()
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            var roots = new[] { Environment.SpecialFolder.ProgramFilesX86, Environment.SpecialFolder.ProgramFiles, Environment.SpecialFolder.LocalApplicationData }
-                        .Select(Environment.GetFolderPath)
-                        .Where(root => root.Length > 0);
-
-            return roots.SelectMany(root => app_window_browsers_windows.Select(relative => Path.Combine(root, relative))).FirstOrDefault(File.Exists);
-        }
-
-        if (OperatingSystem.IsMacOS())
-            return null;
-
-        string[] path = (Environment.GetEnvironmentVariable("PATH") ?? string.Empty).Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries);
-
-        return app_window_browsers_unix.SelectMany(name => path.Select(dir => Path.Combine(dir, name))).FirstOrDefault(File.Exists);
+        start(platform.OpenInDefaultBrowser(url));
     }
 
     private static bool start(string program, params string[] arguments)

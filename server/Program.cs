@@ -1,54 +1,22 @@
 using System.Reflection;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.Extensions.FileProviders;
 using OsuSkinMixer;
+using OsuSkinMixer.Platforms;
 
 // Started plainly, the mixer is an app: it shows its own window and goes away when that is closed.
 // "--no-open" leaves it running as a plain local server instead, and "--browser" uses a tab in the default browser.
 bool open = !args.Contains("--no-open");
 bool preferWindow = !args.Contains("--browser");
 
-// osu!lazer and the mixer both keep their data where each platform expects applications to.
-string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-string osuHome, stateHome;
+var platform = Platform.Current;
 
-if (OperatingSystem.IsWindows())
-{
-    osuHome = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-    stateHome = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-}
-else if (OperatingSystem.IsMacOS())
-    osuHome = stateHome = Path.Combine(home, "Library", "Application Support");
-else
-    osuHome = stateHome = Environment.GetEnvironmentVariable("XDG_DATA_HOME") is { Length: > 0 } xdg ? xdg : Path.Combine(home, ".local", "share");
+string stateDir = Environment.GetEnvironmentVariable("MIXER_STATE_DIR") ?? Path.Combine(platform.AppDataHome, "osu-skin-mixer");
+Directory.CreateDirectory(stateDir);
 
-string stateDir = Environment.GetEnvironmentVariable("MIXER_STATE_DIR") ?? Path.Combine(stateHome, "osu-skin-mixer");
-string locationPath = Path.Combine(stateDir, "osu-location.txt");
-
-// Where osu! keeps its data: wherever the user said, or the folder a running osu! is using, or else the first of
-// the usual places which has a database. Failing all of those, the usual place is named so the user can be asked.
-string locateOsu() => resolveOsuDir(
-    Environment.GetEnvironmentVariable("OSU_DIR")
-    ?? (File.Exists(locationPath) ? File.ReadAllText(locationPath).Trim() : null)
-    ?? remember(OsuLocator.FromRunningGame())
-    ?? OsuLocator.UsualPlaces(home, osuHome).Select(resolveOsuDir).FirstOrDefault(hasDatabase)
-    ?? Path.Combine(osuHome, "osu"));
-
-// A folder found through the running game couldn't be found again once the game is closed, so it is kept.
-string? remember(string? found)
-{
-    if (found != null)
-    {
-        Directory.CreateDirectory(stateDir);
-        File.WriteAllText(locationPath, found);
-    }
-
-    return found;
-}
-
-string osuDir = locateOsu();
+var location = new OsuLocation(platform, stateDir);
+string osuDir = location.Find();
 string? webRoot = Environment.GetEnvironmentVariable("WEB_ROOT");
 
 int port;
@@ -61,7 +29,7 @@ else if (Launcher.IsMixerRunningOn(Launcher.DEFAULT_PORT))
 {
     // Starting the mixer a second time brings up the one which is already running.
     if (open)
-        Launcher.Open($"http://127.0.0.1:{Launcher.DEFAULT_PORT}", preferWindow);
+        Launcher.Open(platform, $"http://127.0.0.1:{Launcher.DEFAULT_PORT}", preferWindow);
 
     return;
 }
@@ -70,13 +38,11 @@ else
 
 string url = $"http://127.0.0.1:{port}";
 
-Directory.CreateDirectory(stateDir);
-
 var builder = WebApplication.CreateBuilder(args);
-builder.WebHost.UseUrls(url);
 builder.Logging.SetMinimumLevel(LogLevel.Warning);
 builder.Services.AddResponseCompression();
 builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase);
+builder.WebHost.UseUrls(url);
 
 var app = builder.Build();
 app.UseResponseCompression();
@@ -87,6 +53,16 @@ var defaults = new DefaultSkinCache(Path.Combine(stateDir, "default-skin"));
 var contentTypes = new FileExtensionContentTypeProvider();
 var sessions = new Sessions(app.Lifetime, exitWhenClosed: open);
 string selectionPath = Path.Combine(stateDir, "selection.json");
+
+// For finding out what the interface is asking for, when something isn't showing up.
+if (Environment.GetEnvironmentVariable("MIXER_LOG_REQUESTS") == "1")
+{
+    app.Use(async (context, next) =>
+    {
+        await next();
+        Console.Error.WriteLine($"{context.Response.StatusCode} {context.Request.Method} {context.Request.Path} {context.Request.Headers.Range}");
+    });
+}
 
 app.Use(async (context, next) =>
 {
@@ -137,9 +113,9 @@ app.MapGet("/api/session", async (HttpContext context) =>
 app.MapGet("/api/state", () =>
 {
     // osu! may have been installed, or started, since the mixer last looked.
-    if (!hasDatabase(osuDir) && hasDatabase(locateOsu()))
+    if (!hasDatabase(osuDir) && location.Find() is string found && hasDatabase(found))
     {
-        osuDir = locateOsu();
+        osuDir = found;
         store = createStore();
     }
 
@@ -150,7 +126,7 @@ object state() => new
 {
     osuDir,
     // A running osu! can be found wherever it keeps its data, which is worth telling someone who is being asked.
-    findsRunningGame = OperatingSystem.IsLinux(),
+    findsRunningGame = platform.CanFindRunningGame,
     // Without a database there is nothing to show yet, and the page asks where osu! is instead.
     missing = !hasDatabase(osuDir),
     blank = new { png = BlankFiles.PngHash, wav = BlankFiles.WavHash },
@@ -161,20 +137,8 @@ object state() => new
 // For installs which aren't in one of the usual places: the user says where osu!'s data is, and it is remembered.
 app.MapPost("/api/location", (LocationRequest request) =>
 {
-    string given = request.Path.Trim().Trim('"');
-
-    if (given.StartsWith('~'))
-        given = home + given[1..];
-
-    // People point at all sorts of things: the folder itself, the database inside it, or its "files" folder.
-    string[] candidates = [given, Path.GetDirectoryName(given) ?? given];
-    string? found = candidates.Where(c => c.Length > 0).Select(resolveOsuDir).FirstOrDefault(hasDatabase);
-
-    if (found == null)
-        throw new UserFacingException($"There is no osu! database (client.realm) in {given}. In osu!, Settings > General > \"Open osu! folder\" shows the right folder.");
-
-    File.WriteAllText(locationPath, found);
-    osuDir = found;
+    osuDir = location.Set(request.Path)
+             ?? throw new UserFacingException($"There is no osu! database (client.realm) in {request.Path.Trim()}. In osu!, Settings > General > \"Open osu! folder\" shows the right folder.");
     store = createStore();
 
     return Results.Ok(new { osuDir });
@@ -218,7 +182,8 @@ app.MapGet("/api/file/{hash}/{*name}", (string hash, string? name, HttpContext c
         return Results.NotFound();
     }
 
-    return Results.File(path, contentTypeFor(name));
+    // Songs are played from here too, and a player asks for a song in pieces as it goes.
+    return Results.File(path, contentTypeFor(name), enableRangeProcessing: true);
 });
 
 // Recoloured images are made in the browser, by the same code which decides what goes into the mix.
@@ -269,7 +234,7 @@ if (open)
 {
     app.Lifetime.ApplicationStarted.Register(() =>
     {
-        Launcher.Open(url, preferWindow);
+        Launcher.Open(platform, url, preferWindow);
         sessions.WatchStartup();
     });
 }
@@ -281,23 +246,4 @@ OsuStore createStore() => new OsuStore(osuDir, stateDir) { ExtraContent = hash =
 string contentTypeFor(string? name) =>
     name != null && contentTypes.TryGetContentType(name, out string? type) ? type : "application/octet-stream";
 
-static bool hasDatabase(string dir) => OsuLocator.HasDatabase(dir);
-
-// lazer lets the data directory be relocated, in which case the default location only holds a pointer.
-static string resolveOsuDir(string dir)
-{
-    string storageIni = Path.Combine(dir, "storage.ini");
-
-    if (!File.Exists(storageIni))
-        return dir;
-
-    foreach (string line in File.ReadAllLines(storageIni))
-    {
-        var match = Regex.Match(line, @"^\s*FullPath\s*=\s*(.+?)\s*$");
-
-        if (match.Success && Directory.Exists(match.Groups[1].Value))
-            return match.Groups[1].Value;
-    }
-
-    return dir;
-}
+static bool hasDatabase(string dir) => OsuLocation.HasDatabase(dir);

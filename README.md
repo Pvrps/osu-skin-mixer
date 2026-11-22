@@ -4,7 +4,7 @@
 
 Make a new osu!lazer skin by picking parts from skins you already have.
 
-It works with osu!lazer, the osu! (standard) game mode, and skins made of image and sound files.
+It works with osu!lazer, the osu! (standard) game mode.
 
 ![The mixer: every element of the skin on the left, a live preview in the middle, and the versions your skins have on the right](docs/screenshot.png)
 
@@ -47,6 +47,7 @@ by themselves.
 
 - `server/` reads and writes osu!'s database (C#).
 - `web/` is the interface and the preview (TypeScript, React, PixiJS).
+- Code that differs between Linux and Windows is kept apart in `server/Platforms/`, one file per system.
 - In `web/`, `npm run dev` gives live reloading on port 5728 while `./run` is running, and `npm test` runs
   the tests.
 - The Realm package in `server/server.csproj` has to be the same version osu!lazer uses, or the database
@@ -54,9 +55,7 @@ by themselves.
 
 ## Limits
 
-- The preview is close to the game but not identical. Sliders appear all at once instead of snaking in, and
-  beatmap skins, storyboards and a beatmap's own hit sounds are not used.
-- Applying has only been tested with osu! closed. If Apply fails, close osu! and try again.
+- The preview is close to the game but not identical.
 - The Windows version has not been tested on Windows yet.
 - The first time you run it, it downloads osu!'s built-in skin so it can show default elements. That needs
   an internet connection once.
