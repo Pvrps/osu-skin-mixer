@@ -67,6 +67,17 @@ function RecolourControl({ value, onChange }: { value: Recolour | undefined; onC
     }, 250);
   };
 
+  // Until a colour is set, the whole row is the button which opens the colour picker.
+  if (!value && !draft) {
+    return (
+      <label className="recolour unset">
+        <span className="swatch" />
+        <span>Recolour this image</span>
+        <input type="color" aria-label="Recolour this image" value="#ffffff" onChange={(e) => pick(e.target.value)} />
+      </label>
+    );
+  }
+
   return (
     <div className="recolour">
       <label className={`swatch${colour ? " set" : ""}`} style={colour ? { background: colour } : undefined} title="Pick a colour">
@@ -95,7 +106,7 @@ function RecolourControl({ value, onChange }: { value: Recolour | undefined; onC
           </button>
         </>
       ) : (
-        <span className="muted">Recolour this image</span>
+        <span className="muted">Recolouring…</span>
       )}
     </div>
   );
@@ -192,6 +203,8 @@ function ElementView(props: Props & { entry: ElementEntry }) {
           </div>
         </div>
 
+        {category.note && <p className="note">{category.note}</p>}
+
         {entry.kind === "image" && hasFiles && <RecolourControl value={recolour} onChange={(r) => onRecolour(entry.element, r)} />}
 
         <div className="inspector-section">
@@ -286,6 +299,8 @@ function GroupView(props: Props) {
       </header>
 
       <div className="inspector-scroll">
+        {category.note && <p className="note">{category.note}</p>}
+
         {sorted.length > 0 && (
           <p className="muted">
             Pick an element on the left to change just that one, or take the whole group from one skin below.

@@ -3,8 +3,9 @@ import { type Beatmap, fetchBeatmaps } from "../lib/api";
 import { type Skin, fileUrl } from "../lib/skins";
 import { parseBeatmap } from "../preview/beatmap";
 import { PreviewRenderer, type PreviewSettings } from "../preview/renderer";
-import { DEMO_SCENE } from "../preview/scene";
+import { DEMO_SCENE, type Scene } from "../preview/scene";
 import { BeatmapPicker, DEMO_ID, formatTime } from "./BeatmapPicker";
+import { JumpMenu } from "./JumpMenu";
 
 interface Props {
   skin: Skin | null;
@@ -17,6 +18,7 @@ const STORAGE_KEY = "osu-skin-mixer.preview";
 
 interface Remembered {
   beatmap?: string;
+  sound?: boolean;
   volume?: number;
   backdrop?: number;
   hud?: boolean;
@@ -70,21 +72,29 @@ export function Preview({ skin, defaults, note }: Props) {
   const [settings, setSettings] = useState<PreviewSettings>({
     backdrop: saved.current.backdrop ?? 0.2,
     playing: frozenAt.current === null,
-    sound: false,
+    // Sound is on unless it was turned off. The browser holds it back until the first click on the page.
+    sound: saved.current.sound ?? true,
     volume: saved.current.volume ?? 0.6,
     hud: saved.current.hud ?? true,
   });
   const [loading, setLoading] = useState(true);
   const [beatmaps, setBeatmaps] = useState<Beatmap[] | null>(null);
   const [chosen, setChosen] = useState<string | null>(null);
-  const [range, setRange] = useState({ start: DEMO_SCENE.start, end: DEMO_SCENE.end });
+  const [scene, setScene] = useState<Scene>(DEMO_SCENE);
   const [time, setTime] = useState(0);
   const [picking, setPicking] = useState(false);
+  const [jumping, setJumping] = useState(false);
+  const [waitingForClick, setWaitingForClick] = useState(false);
+
+  const range = scene;
 
   useEffect(() => {
     const instance = new PreviewRenderer();
     renderer.current = instance;
-    instance.onProgress = setTime;
+    instance.onProgress = (now) => {
+      setTime(now);
+      setWaitingForClick(instance.soundWaitingForClick);
+    };
     void instance.init(host.current!);
 
     return () => {
@@ -112,11 +122,11 @@ export function Preview({ skin, defaults, note }: Props) {
 
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ beatmap: chosen ?? undefined, volume: settings.volume, backdrop: settings.backdrop, hud: settings.hud } satisfies Remembered));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ beatmap: chosen ?? undefined, sound: settings.sound, volume: settings.volume, backdrop: settings.backdrop, hud: settings.hud } satisfies Remembered));
     } catch {
       // Without storage the choices simply aren't remembered.
     }
-  }, [chosen, settings.volume, settings.backdrop, settings.hud]);
+  }, [chosen, settings.sound, settings.volume, settings.backdrop, settings.hud]);
 
   const beatmap = beatmaps?.find((b) => b.id === chosen) ?? null;
 
@@ -130,7 +140,7 @@ export function Preview({ skin, defaults, note }: Props) {
       if (!current || !renderer.current) return;
 
       renderer.current.setScene(scene, { audioUrl, backgroundUrl }, frozen ?? startAt);
-      setRange({ start: scene.start, end: scene.end });
+      setScene(scene);
     };
 
     if (!beatmap) {
@@ -183,6 +193,7 @@ export function Preview({ skin, defaults, note }: Props) {
 
   const toggle = (key: "playing" | "sound" | "hud") => setSettings((s) => ({ ...s, [key]: !s[key] }));
   const closePicker = useCallback(() => setPicking(false), []);
+  const closeJump = useCallback(() => setJumping(false), []);
 
   return (
     <div className="preview">
@@ -190,6 +201,7 @@ export function Preview({ skin, defaults, note }: Props) {
         <div className="preview-canvas" ref={host} />
         {note && <div className="preview-note">{note}</div>}
         {loading && <div className="preview-loading">Loading…</div>}
+        {waitingForClick && settings.playing && <div className="preview-hint">Click anywhere to start the sound</div>}
       </div>
 
       <div className="transport">
@@ -237,9 +249,27 @@ export function Preview({ skin, defaults, note }: Props) {
           )}
         </div>
 
+        <div className="transport-jump">
+          <button title="Go to the next slider, spinner, miss and so on" aria-haspopup="menu" aria-expanded={jumping} onClick={() => setJumping((v) => !v)}>
+            Jump to
+          </button>
+          {jumping && (
+            <JumpMenu
+              scene={scene}
+              time={time}
+              onJump={(to) => {
+                renderer.current?.seek(to);
+                setTime(to);
+                setJumping(false);
+              }}
+              onClose={closeJump}
+            />
+          )}
+        </div>
+
         <div className="spacer" />
 
-        <button className={`icon${settings.sound ? " on" : ""}`} aria-pressed={settings.sound} aria-label="Sound" title={settings.sound ? "Mute" : "Play the song and hit sounds"} onClick={() => toggle("sound")}>
+        <button className={`icon${settings.sound ? " on" : ""}`} aria-pressed={settings.sound} aria-label="Sound" title={settings.sound ? "Mute" : "Unmute"} onClick={() => toggle("sound")}>
           {settings.sound ? ICONS.sound : ICONS.muted}
         </button>
         <input

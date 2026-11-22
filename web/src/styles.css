@@ -640,6 +640,19 @@ input::placeholder {
   backdrop-filter: blur(6px);
 }
 
+.preview-hint {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  background: rgb(21 20 28 / 0.9);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  padding: 4px 14px;
+  font-size: 12px;
+  color: var(--muted);
+  pointer-events: none;
+}
+
 .preview-loading {
   top: auto;
   bottom: 12px;
@@ -758,7 +771,7 @@ input[type="range"]:disabled {
 
 .transport-song {
   position: relative;
-  flex: 0 1 320px;
+  flex: 0 1 240px;
   min-width: 0;
 }
 
@@ -795,6 +808,44 @@ input[type="range"]:disabled {
   border: 1px solid var(--line-strong);
   border-radius: var(--radius);
   box-shadow: 0 20px 60px rgb(0 0 0 / 0.6);
+}
+
+.transport-jump {
+  position: relative;
+  flex: none;
+}
+
+.menu {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 0;
+  z-index: 10;
+  min-width: 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  background: var(--raised);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 20px 60px rgb(0 0 0 / 0.6);
+}
+
+.transport .menu button {
+  justify-content: space-between;
+  gap: 16px;
+  padding: 6px 8px;
+  background: transparent;
+  border-color: transparent;
+  text-align: left;
+}
+
+.transport .menu button:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.menu .muted {
+  font-size: 12px;
 }
 
 .picker-list {
@@ -937,6 +988,43 @@ input[type="range"]:disabled {
   background: var(--raised);
   border: 1px solid var(--line);
   border-radius: var(--radius);
+}
+
+.recolour.unset {
+  position: relative;
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    background 0.12s,
+    border-color 0.12s,
+    color 0.12s;
+}
+
+.recolour.unset:hover,
+.recolour.unset:focus-within {
+  background: var(--hover);
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+.recolour.unset > input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.note {
+  font-size: 12px;
+  color: var(--muted);
+  padding: 8px 10px;
+  border-left: 2px solid var(--accent);
+  background: var(--accent-soft);
+  border-radius: 0 var(--radius-small) var(--radius-small) 0;
 }
 
 .swatch {

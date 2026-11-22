@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { Beatmap } from "../lib/api";
+import { useDismiss } from "./useDismiss";
 
 /** Stands for the built-in pattern, which is always available. */
 export const DEMO_ID = "demo";
@@ -36,22 +37,7 @@ export function BeatmapPicker({ beatmaps, chosen, onChoose, onClose }: Props) {
     if (matches.length < LIMIT) matches.push(beatmaps[i]!);
   }
 
-  useEffect(() => {
-    const onPointer = (e: PointerEvent) => {
-      if (root.current && !root.current.contains(e.target as Node)) onClose();
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-
-    document.addEventListener("pointerdown", onPointer);
-    document.addEventListener("keydown", onKey);
-
-    return () => {
-      document.removeEventListener("pointerdown", onPointer);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [onClose]);
+  useDismiss(root, onClose);
 
   return (
     <div className="picker" ref={root} role="dialog" aria-label="Choose what to preview with">

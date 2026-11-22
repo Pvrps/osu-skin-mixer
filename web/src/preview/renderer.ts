@@ -58,6 +58,8 @@ const SINGLE_TEXTURES = [
   "cursor",
   "cursormiddle",
   "cursortrail",
+  "inputoverlay-background",
+  "inputoverlay-key",
   "scorebar-bg",
   "scorebar-marker",
   "scorebar-ki",
@@ -81,6 +83,14 @@ const SINGLE_TEXTURES = [
 ];
 
 const ANIMATED_TEXTURES = ["hit0", "hit50", "hit100", "hit300", "followpoint", "sliderfollowcircle", "scorebar-colour"];
+
+const HEALTH_TEXTURES = ["scorebar-bg", "scorebar-marker", "scorebar-ki", "scorebar-kidanger", "scorebar-kidanger2"];
+
+// The key overlay shows two keyboard keys and two mouse buttons, lit in a colour of their own while held.
+const KEY_NAMES = ["K1", "K2", "M1", "M2"];
+const KEY_ACTIVE_COLOURS = [0xffde00, 0xffde00, 0xf8009e, 0xf8009e];
+const KEY_SIZE = 46;
+const KEY_TRANSITION = 160;
 
 const RESULT_TEXTURE = { great: "hit300", ok: "hit100", meh: "hit50", miss: "hit0" } as const;
 const RESULT_PARTICLE = { great: "particle300", ok: "particle100", meh: "particle50", miss: null } as const;
@@ -131,6 +141,9 @@ export class PreviewRenderer {
   private readonly audio = new PreviewAudio();
 
   private skin: PreviewSkin | null = null;
+  /** The game's own skin, for the things which are taken whole from one skin or the other. */
+  private builtIn: PreviewSkin | null = null;
+  private readonly labels = new Map<string, Tex>();
   private fonts: Record<FontName, Font> | null = null;
   private comboColours: Rgb[] = [];
   private trailConnected = false;
@@ -228,6 +241,11 @@ export class PreviewRenderer {
     return this.time;
   }
 
+  /** Whether sound is on but won't be heard until the page has been clicked. */
+  get soundWaitingForClick() {
+    return this.audio.waitingForClick;
+  }
+
   /** Switches to a different set of hit objects, starting from the given time. */
   setScene(scene: Scene, media: SceneMedia, startAt: number) {
     this.scene = scene;
@@ -286,6 +304,11 @@ export class PreviewRenderer {
     for (const name of SINGLE_TEXTURES) loads.push(skin.load(name));
     for (const name of ANIMATED_TEXTURES) loads.push(skin.loadFrames(name));
 
+    const builtIn = new PreviewSkin({ id: "built-in", name: "", creator: "", files: [], ini: [] }, defaults);
+
+    for (const name of HEALTH_TEXTURES) loads.push(builtIn.load(name));
+    loads.push(builtIn.loadFrames("scorebar-colour"));
+
     loads.push(skin.loadFrames("sliderb", ""));
 
     // Circle pieces: a skin's own slider start/end circles replace the regular circle, overlay included.
@@ -327,6 +350,7 @@ export class PreviewRenderer {
     }
 
     this.skin = skin;
+    this.builtIn = builtIn;
     this.fonts = fonts;
     this.comboColours = skin.comboColours();
 
@@ -549,6 +573,12 @@ export class PreviewRenderer {
     }
 
     this.used = 0;
+
+    // Done between frames, while no sprite is showing one of them.
+    if (this.labels.size > 300) {
+      for (const label of this.labels.values()) label.texture.destroy(true);
+      this.labels.clear();
+    }
 
     if (this.skin) {
       this.playSounds(previous, this.time);
@@ -1126,16 +1156,18 @@ export class PreviewRenderer {
     // Health.
     this.displayedHealth = lerp(this.displayedHealth, hud.health, 0.12);
 
-    const background = skin.tex("scorebar-bg");
-    // Which health bar style applies is decided by whichever skin supplies the background.
+    // As in lazer, the whole bar comes from whichever skin supplies its background. A skin without one gets the
+    // game's own bar, and any other pieces it has go unused.
     const own = skin.has("scorebar-bg");
-    const fromOwn = (name: string) => (own ? (skin.has(name) ? skin.tex(name) : null) : skin.tex(name));
+    const bar = own ? skin : (this.builtIn ?? skin);
+    const fromOwn = (name: string) => (own ? (skin.has(name) ? skin.tex(name) : null) : bar.tex(name));
+    const background = bar.tex("scorebar-bg");
     const marker = fromOwn("scorebar-marker");
     const newStyle = marker !== null;
 
     this.draw(background, 0, 0, { scale: h, anchorX: 0, anchorY: 0 });
 
-    const fillFrames = skin.frames("scorebar-colour").filter((f) => (own ? !f.fromDefault : true));
+    const fillFrames = own ? skin.frames("scorebar-colour").filter((f) => !f.fromDefault) : bar.frames("scorebar-colour");
     const fill = this.frameAt(fillFrames, time, true);
     const fillX = (newStyle ? 7.5 : 3) * 1.6 * h;
     const fillY = (newStyle ? 7.8 : 10) * 1.6 * h;
@@ -1157,6 +1189,8 @@ export class PreviewRenderer {
       const ki = this.displayedHealth < 0.2 ? fromOwn("scorebar-kidanger2") : this.displayedHealth < 0.5 ? fromOwn("scorebar-kidanger") : null;
       this.draw(ki ?? fromOwn("scorebar-ki"), fillX + fillWidth, fillY, { scale: h });
     }
+
+    this.drawKeyOverlay(time);
 
     // Score and accuracy, top right.
     const score = this.drawText("score", String(Math.round(hud.score)).padStart(6, "0"), this.width - 10 * h, 0, {
@@ -1187,6 +1221,80 @@ export class PreviewRenderer {
 
       const bump = since >= 0 && since < 100 ? 1 + 0.1 * Math.sin((since / 100) * Math.PI) : 1;
       this.drawText("combo", text, x, y, { scale: scale * bump, anchorX: 0, anchorY: 1 });
+    }
+  }
+
+  /** A short piece of text in a plain font, for the few places the game doesn't use a skin's own. */
+  private label(text: string): Tex {
+    let label = this.labels.get(text);
+
+    if (!label) {
+      const resolution = 3;
+      const size = 16 * resolution;
+      const font = `600 ${size}px Inter, "Segoe UI", system-ui, sans-serif`;
+      const canvas = document.createElement("canvas");
+      const context = canvas.getContext("2d")!;
+
+      context.font = font;
+      canvas.width = Math.ceil(context.measureText(text).width) + 4;
+      canvas.height = Math.ceil(size * 1.3);
+
+      context.font = font;
+      context.fillStyle = "#fff";
+      context.textAlign = "center";
+      context.textBaseline = "middle";
+      context.fillText(text, canvas.width / 2, canvas.height / 2);
+
+      label = { texture: Texture.from(canvas), width: canvas.width / resolution, height: canvas.height / resolution, ratio: 1 / resolution, fromDefault: false };
+      this.labels.set(text, label);
+    }
+
+    return label;
+  }
+
+  /** The key overlay at the right edge, laid out as LegacyKeyCounterDisplay does. */
+  private drawKeyOverlay(time: number) {
+    const skin = this.skin!;
+    const h = this.hudUnit;
+    const right = this.width;
+    const top = this.height / 2 - 40 * 1.6 * h;
+
+    // The background is drawn on its side, hanging down from the top right corner.
+    this.draw(skin.tex("inputoverlay-background"), right + h, top, { scale: h, scaleX: 1.05, rotation: Math.PI / 2, anchorX: 0, anchorY: 0 });
+
+    const key = skin.tex("inputoverlay-key");
+    const textColour = rgbToHex(skin.colour("InputOverlayText") ?? [0, 0, 0]);
+    const clicks = this.scene.clicks;
+
+    // How many clicks have begun by now.
+    let low = 0;
+    let high = clicks.length;
+
+    while (low < high) {
+      const middle = (low + high) >> 1;
+
+      if (clicks[middle]!.down <= time) low = middle + 1;
+      else high = middle;
+    }
+
+    for (let i = 0; i < KEY_NAMES.length; i++) {
+      // Autoplay alternates between the two keys and never touches the mouse buttons.
+      const presses = i === 0 ? Math.ceil(low / 2) : i === 1 ? Math.floor(low / 2) : 0;
+      const last = presses > 0 ? clicks[(presses - 1) * 2 + i] : undefined;
+
+      let scale = 1;
+      let held = false;
+
+      if (last) {
+        held = time < last.up;
+        scale = held ? lerp(1, 0.8, outQuad(clamp01((time - last.down) / KEY_TRANSITION))) : lerp(0.8, 1, outQuad(clamp01((time - last.up) / KEY_TRANSITION)));
+      }
+
+      const x = right - (KEY_SIZE / 2) * h;
+      const y = top + (7.35 + KEY_SIZE / 2 + i * (KEY_SIZE + 1.2)) * h;
+
+      this.draw(key, x, y, { scale: h * scale, tint: held ? KEY_ACTIVE_COLOURS[i] : 0xffffff });
+      this.draw(this.label(presses > 0 ? String(presses) : KEY_NAMES[i]!), x, y, { scale: h * scale, tint: textColour });
     }
   }
 

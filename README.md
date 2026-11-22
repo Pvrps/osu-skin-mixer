@@ -22,6 +22,7 @@ your default browser. Closing that window quits the mixer.
 2. Pick an element on the left. On the right are all the versions of it your skins have, with identical ones
    folded together. Hover one to try it in the preview, click to take it.
 3. Click a group's name (Cursor, Hit sounds, ...) to take all of it from one skin, or to change its settings.
+   **Jump to** under the preview skips to the next slider, spinner, miss and so on in the song.
 4. Press **Create skin**, then choose the new skin in osu!. After later changes press **Apply**, and in osu!
    switch to another skin and back: the game doesn't reload a skin while it is selected.
 

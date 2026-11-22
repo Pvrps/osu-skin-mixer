@@ -13,15 +13,36 @@ export class PreviewAudio {
   private readonly decoded = new Map<string, Promise<AudioBuffer | null>>();
   private music: HTMLAudioElement | null = null;
   private volume = 0.6;
+  /** Set when the browser refused to start the song because nothing on the page has been clicked yet. */
+  private refused = false;
+  private stopListening: (() => void) | null = null;
 
   enabled = false;
 
-  /** Browsers only allow audio to start from a user gesture, so this is called from the toggle's click. */
+  /**
+   * Browsers only let a page make sound once it has been clicked or typed into. Sound which is on from the start
+   * therefore begins with the first click anywhere, which is what the listeners here wait for.
+   */
   enable() {
     if (!this.context) {
       this.context = new AudioContext();
       this.gain = this.context.createGain();
       this.gain.connect(this.context.destination);
+    }
+
+    if (!this.stopListening) {
+      const unlock = () => {
+        this.refused = false;
+        void this.context?.resume();
+      };
+
+      document.addEventListener("pointerdown", unlock, true);
+      document.addEventListener("keydown", unlock, true);
+
+      this.stopListening = () => {
+        document.removeEventListener("pointerdown", unlock, true);
+        document.removeEventListener("keydown", unlock, true);
+      };
     }
 
     void this.context.resume();
@@ -124,10 +145,17 @@ export class PreviewAudio {
       return;
     }
 
-    if (music.paused) {
+    if (music.paused && !this.refused) {
       music.currentTime = Math.max(0, time / 1000);
-      void music.play().catch(() => {});
+      void music.play().catch((e: Error) => {
+        if (e.name === "NotAllowedError") this.refused = true;
+      });
     }
+  }
+
+  /** Whether sound is on but the browser is holding it back until the page is clicked. */
+  get waitingForClick(): boolean {
+    return this.enabled && (this.refused || this.context?.state === "suspended");
   }
 
   seekMusic(time: number) {
@@ -143,6 +171,7 @@ export class PreviewAudio {
   }
 
   destroy() {
+    this.stopListening?.();
     this.music?.pause();
     this.music = null;
     void this.context?.close();

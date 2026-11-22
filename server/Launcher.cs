@@ -68,7 +68,7 @@ public static class Launcher
     /// </summary>
     public static void Open(string url, bool preferWindow)
     {
-        if (preferWindow && findAppWindowBrowser() is string browser && start(browser, $"--app={url}", "--new-window"))
+        if (preferWindow && findAppWindowBrowser() is string browser && start(browser, $"--app={url}", "--new-window", "--autoplay-policy=no-user-gesture-required"))
             return;
 
         if (OperatingSystem.IsWindows())

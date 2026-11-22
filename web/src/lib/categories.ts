@@ -18,6 +18,8 @@ interface Def<Id extends string> {
   label: string;
   section: Section;
   hint: string;
+  /** Something about how the game treats this group which isn't obvious from looking at it. */
+  note?: string;
   /** Matches the stem of top-level image files belonging to this group. */
   pattern?: RegExp;
   /** Matches the stem of top-level audio files belonging to this group. */
@@ -121,6 +123,7 @@ export const CATEGORIES = define([
     label: "Health bar",
     section: "In-game interface",
     hint: "Background, fill and markers",
+    note: "osu! takes the whole health bar from whichever skin provides scorebar-bg. If the mix has no scorebar-bg, the game shows its own bar and ignores the other pieces.",
     pattern: /^scorebar-.+$/,
     ini: {},
   },
