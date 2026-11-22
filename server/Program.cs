@@ -1,20 +1,56 @@
+using System.Reflection;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.StaticFiles;
+using Microsoft.Extensions.FileProviders;
 using OsuSkinMixer;
 
-string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-string dataHome = Environment.GetEnvironmentVariable("XDG_DATA_HOME") is { Length: > 0 } xdg ? xdg : Path.Combine(home, ".local", "share");
+// Started plainly, the mixer is an app: it shows its own window and goes away when that is closed.
+// "--no-open" leaves it running as a plain local server instead, and "--browser" uses a tab in the default browser.
+bool open = !args.Contains("--no-open");
+bool preferWindow = !args.Contains("--browser");
 
-string osuDir = resolveOsuDir(Environment.GetEnvironmentVariable("OSU_DIR") ?? Path.Combine(dataHome, "osu"));
-string stateDir = Environment.GetEnvironmentVariable("MIXER_STATE_DIR") ?? Path.Combine(dataHome, "osu-skin-mixer");
-string port = Environment.GetEnvironmentVariable("PORT") ?? "5727";
-string webRoot = Environment.GetEnvironmentVariable("WEB_ROOT") ?? Path.Combine(AppContext.BaseDirectory, "wwwroot");
+// osu!lazer and the mixer both keep their data where each platform expects applications to.
+string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+string osuHome, stateHome;
+
+if (OperatingSystem.IsWindows())
+{
+    osuHome = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+    stateHome = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+}
+else if (OperatingSystem.IsMacOS())
+    osuHome = stateHome = Path.Combine(home, "Library", "Application Support");
+else
+    osuHome = stateHome = Environment.GetEnvironmentVariable("XDG_DATA_HOME") is { Length: > 0 } xdg ? xdg : Path.Combine(home, ".local", "share");
+
+string osuDir = resolveOsuDir(Environment.GetEnvironmentVariable("OSU_DIR") ?? Path.Combine(osuHome, "osu"));
+string stateDir = Environment.GetEnvironmentVariable("MIXER_STATE_DIR") ?? Path.Combine(stateHome, "osu-skin-mixer");
+string? webRoot = Environment.GetEnvironmentVariable("WEB_ROOT");
+
+int port;
+
+if (int.TryParse(Environment.GetEnvironmentVariable("PORT"), out int wanted))
+    port = wanted;
+else if (Launcher.IsPortFree(Launcher.DEFAULT_PORT))
+    port = Launcher.DEFAULT_PORT;
+else if (Launcher.IsMixerRunningOn(Launcher.DEFAULT_PORT))
+{
+    // Starting the mixer a second time brings up the one which is already running.
+    if (open)
+        Launcher.Open($"http://127.0.0.1:{Launcher.DEFAULT_PORT}", preferWindow);
+
+    return;
+}
+else
+    port = Launcher.FindFreePort();
+
+string url = $"http://127.0.0.1:{port}";
 
 Directory.CreateDirectory(stateDir);
 
 var builder = WebApplication.CreateBuilder(args);
-builder.WebHost.UseUrls($"http://127.0.0.1:{port}");
+builder.WebHost.UseUrls(url);
 builder.Logging.SetMinimumLevel(LogLevel.Warning);
 builder.Services.AddResponseCompression();
 builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase);
@@ -26,6 +62,7 @@ var generated = new GeneratedFiles(Path.Combine(stateDir, "generated"));
 var store = new OsuStore(osuDir, stateDir) { ExtraContent = hash => BlankFiles.Get(hash) ?? generated.Get(hash) };
 var defaults = new DefaultSkinCache(Path.Combine(stateDir, "default-skin"));
 var contentTypes = new FileExtensionContentTypeProvider();
+var sessions = new Sessions(app.Lifetime, exitWhenClosed: open);
 string selectionPath = Path.Combine(stateDir, "selection.json");
 
 app.Use(async (context, next) =>
@@ -44,6 +81,33 @@ app.Use(async (context, next) =>
         app.Logger.LogError(e, "Request failed");
         context.Response.StatusCode = StatusCodes.Status500InternalServerError;
         await context.Response.WriteAsJsonAsync(new { error = e.Message });
+    }
+});
+
+app.MapGet("/api/ping", () => Launcher.PING_REPLY);
+
+// Every open page holds one of these for as long as it is open, which is how the mixer knows when to go away.
+app.MapGet("/api/session", async (HttpContext context) =>
+{
+    context.Response.ContentType = "text/event-stream";
+    context.Response.Headers.CacheControl = "no-store";
+    sessions.Enter();
+
+    try
+    {
+        while (!context.RequestAborted.IsCancellationRequested)
+        {
+            await context.Response.WriteAsync(": still here\n\n", context.RequestAborted);
+            await context.Response.Body.FlushAsync(context.RequestAborted);
+            await Task.Delay(TimeSpan.FromSeconds(15), context.RequestAborted);
+        }
+    }
+    catch (OperationCanceledException)
+    {
+    }
+    finally
+    {
+        sessions.Leave();
     }
 });
 
@@ -121,15 +185,33 @@ app.MapGet("/api/default/file/{name}", async (string name, HttpContext context) 
     return Results.File(path, contentTypeFor(name));
 });
 
-if (Directory.Exists(webRoot))
+// The UI is built into the executable. During development WEB_ROOT points at a fresh build of it instead.
+IFileProvider? ui = null;
+
+if (webRoot != null && Directory.Exists(webRoot))
+    ui = new PhysicalFileProvider(Path.GetFullPath(webRoot));
+else if (Assembly.GetExecutingAssembly().GetManifestResourceNames().Any(name => name.EndsWith("Manifest.xml", StringComparison.Ordinal)))
+    ui = new ManifestEmbeddedFileProvider(Assembly.GetExecutingAssembly(), "wwwroot");
+
+if (ui?.GetFileInfo("index.html").Exists == true)
 {
-    var files = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(Path.GetFullPath(webRoot));
-    app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = files });
-    app.UseStaticFiles(new StaticFileOptions { FileProvider = files });
+    app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = ui });
+    app.UseStaticFiles(new StaticFileOptions { FileProvider = ui });
 }
+else
+    app.MapGet("/", () => "This build of osu-skin-mixer has no user interface in it. Build the web folder, or set WEB_ROOT.");
 
 Console.WriteLine($"osu! data:  {osuDir}");
-Console.WriteLine($"listening:  http://127.0.0.1:{port}");
+Console.WriteLine($"listening:  {url}");
+
+if (open)
+{
+    app.Lifetime.ApplicationStarted.Register(() =>
+    {
+        Launcher.Open(url, preferWindow);
+        sessions.WatchStartup();
+    });
+}
 
 app.Run();
 

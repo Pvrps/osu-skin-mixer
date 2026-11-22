@@ -1,63 +1,86 @@
-# osu-skin-mixer
+# osu! skin mixer
 
-Mix and match parts of your osu!lazer skins (cursor from one, hit circles from another, hitsounds from a third)
-with a live gameplay preview, and write the result straight into a skin in the game.
+Build a skin for [osu!lazer](https://github.com/ppy/osu) out of parts of the skins you already have, and see it in
+play before it goes anywhere near the game.
 
-osu! standard and legacy-format skins only.
+- Start from one of your skins, then swap in any single element (an image, a sound, a font glyph) from any other.
+- Hide or silence an element, fall back to the game's own, or recolour an image.
+- Watch the result on a beatmap from your own library, with its song and hit sounds.
+- Set any `skin.ini` value yourself.
+- Press **Apply** and the mix appears in osu! as a skin of its own. The skins it draws on are never changed.
 
-## Running
+Only osu! standard is previewed, and only legacy-style skins (the kind made of image and sound files) can be
+mixed.
 
-```sh
-./run
-```
+## Using it
 
-Then open <http://127.0.0.1:5727>. On NixOS the script enters the flake's dev shell by itself; elsewhere you need
-the .NET 10 SDK and Node 22.
+Download the build for your platform from the releases page and run it. It is a single file with nothing to
+install. It opens in a window of its own if you have Edge, Chrome, Chromium or Brave, and otherwise in a tab of
+your default browser. Closing that window quits the mixer.
 
-1. Pick a base skin. The mix starts out as a copy of it.
-2. Pick a category on the left. Each row is one element (an image with its `@2x` version and animation frames,
-   or one sample) and each column a skin. Click a skin's name to use it for the whole category, or a single cell
-   to take just that element from that skin. Hovering tries it in the preview.
-3. Under **skin.ini overrides**, set any `Section.Key` yourself. These win over whatever the chosen skins say.
-4. The colour dot beside an image recolours it: **tint** paints the whole image in the colour you pick, **hue**
-   only shifts its colours and keeps whites and shading. The recolour sticks to the element, whichever skin it
-   comes from.
-5. Press **Apply to skin**. The mix skin is created if it does not exist yet.
-6. In osu!, select the mix skin. After later changes, switch to another skin and back: lazer does not reload a
-   skin's files while it is selected.
+1. Name your mix and pick the skin it starts as a copy of.
+2. Pick an element on the left. On the right are all the versions of it your skins have, with identical ones
+   folded together. Hover one to try it in the preview, click to take it.
+3. Click a group's name (Cursor, Hit sounds, ...) to take all of it from one skin, or to change its settings.
+4. Press **Create skin**, then choose the new skin in osu!. After later changes press **Apply**, and in osu!
+   switch to another skin and back: the game doesn't reload a skin while it is selected.
+
+Before the first change of each session the mixer saves a copy of osu!'s database, keeping the newest three.
+
+### Where things are
+
+| | Linux | Windows |
+| --- | --- | --- |
+| osu! data it looks for | `~/.local/share/osu` | `%APPDATA%\osu` |
+| The mixer's own data | `~/.local/share/osu-skin-mixer` | `%LOCALAPPDATA%\osu-skin-mixer` |
+
+A data folder moved from within osu! is followed automatically. The mixer's own data holds your current mix,
+recoloured images, a cache of the game's built-in skin (downloaded the first time it is needed), and the
+database backups.
+
+### Options
+
+| | |
+| --- | --- |
+| `--no-open` | Don't open a window, and keep running until stopped. |
+| `--browser` | Open in a tab of the default browser instead of a window of its own. |
+| `OSU_DIR` | Where osu!'s data is, if not in the usual place. |
+| `MIXER_STATE_DIR` | Where the mixer keeps its own data. |
+| `PORT` | The port to serve on. Defaults to 5727, or any free one if that is taken. |
 
 ## How it works
 
-lazer keeps skins in its Realm database (`client.realm`) as lists of filename → content hash, with the content in
-`files/`. Applying rewrites the mix skin's file list to point at the chosen skins' existing files, plus a generated
-`skin.ini`, so nothing is copied and nothing in the source skins is touched.
+osu!lazer keeps every file of every skin once, named by its hash, and a database saying which skin uses which
+file under which name. A mix is therefore mostly bookkeeping: the mixer writes a skin entry which points at
+files the game already has. The only new files are the generated `skin.ini`, recoloured images, and the blank
+image and silent sample which stand in for hidden elements.
 
-- A copy of `client.realm` is saved to the state directory before every apply (newest three are kept).
-- Font glyphs are stored under `mixfonts/` in the mix so number fonts from different skins cannot clash.
-- HUD layouts you edit in lazer's own skin editor while on the mix skin are kept across applies.
-- Any category or single element, except combo colours and the interface, can be set to **None**, which fills it with invisible 1×1
-  images or silent samples so nothing shows through from the game's built-in skin.
-- Elements a skin leaves out fall back to lazer's classic skin, in the preview as in the game. Those images are
-  downloaded from [ppy/osu-resources](https://github.com/ppy/osu-resources) the first time they are needed.
+- `server/` is a small local web server (ASP.NET, .NET 10) which reads and writes osu!'s Realm database. It opens
+  the database only for the length of each request, in a mode which can never change its schema.
+- `web/` is the interface (React, TypeScript, PixiJS). All of the skin logic lives here, in `web/src/lib`, so
+  that what the preview shows and what gets written are computed by the same code. `web/src/preview` is a
+  reimplementation of how lazer draws a legacy skin, and reads `.osu` files to play them.
 
-The preview follows lazer's legacy skin rules but is a reimplementation, not the game: expect small differences.
-
-## Configuration
-
-| Variable | Default | |
-| --- | --- | --- |
-| `OSU_DIR` | `~/.local/share/osu` | lazer's data directory |
-| `MIX_SKIN_NAME` | `purps - mix` | name of the skin to write |
-| `MIXER_STATE_DIR` | `~/.local/share/osu-skin-mixer` | saved selection, database backups, classic skin cache |
-| `PORT` | `5727` | |
+The Realm package must be the version osu!lazer itself ships with, or the database can't be opened.
 
 ## Development
 
+Needs the .NET 10 SDK and Node 22. With Nix, `nix develop` provides both, and the scripts enter it by themselves.
+
 ```sh
-nix develop
-(cd server && dotnet run)     # API on :5727
-(cd web && npm run dev)       # UI on :5728, proxying /api
+./run        # build the UI if it is stale, and serve on http://127.0.0.1:5727 without opening a window
+./publish    # build the standalone app for Linux and Windows into dist/
 ```
 
-`server/` is a thin ASP.NET API over the Realm database. All mixing logic lives in `web/src/lib`, and the preview
-in `web/src/preview`.
+For work on the interface, run `npm run dev` in `web/` alongside `./run` for hot reloading on port 5728.
+`npm test` runs the tests of the mixing logic and the beatmap reader.
+
+Pushing a tag like `v0.2.0` builds both platforms and attaches them to a GitHub release.
+
+## Known limits
+
+- The preview is an approximation of the game. Slider bodies appear whole rather than snaking in, and beatmap
+  skins, storyboards and custom beatmap samples are not shown or played.
+- Applying has only been tried with osu! closed. With the game running it may hold its database in a way that
+  gets in the mixer's way, so close the game first if Apply fails.
+- The Windows build has not been run on Windows yet.

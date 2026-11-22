@@ -6,12 +6,37 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>OsuSkinMixer</RootNamespace>
     <AssemblyName>osu-skin-mixer</AssemblyName>
+    <Version>0.1.0</Version>
     <InvariantGlobalization>true</InvariantGlobalization>
+    <GenerateEmbeddedFilesManifest>true</GenerateEmbeddedFilesManifest>
+    <!-- The UI is embedded by hand below, so none of the web SDK's own asset handling is wanted. -->
+    <StaticWebAssetsEnabled>false</StaticWebAssetsEnabled>
+    <IsTransformWebConfigDisabled>true</IsTransformWebConfigDisabled>
+  </PropertyGroup>
+
+  <!-- A build for a specific platform is the release build: one file, with the runtime and the UI inside it. -->
+  <PropertyGroup Condition="'$(RuntimeIdentifier)' != ''">
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+
+  <!-- On Windows the mixer is a windowed app, so starting it doesn't leave a console on screen. -->
+  <PropertyGroup Condition="$(RuntimeIdentifier.StartsWith('win'))">
+    <OutputType>WinExe</OutputType>
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.FileProviders.Embedded" Version="10.0.0" />
     <!-- Must match the Realm version osu!lazer ships with (see osu.Game.csproj). -->
     <PackageReference Include="Realm" Version="20.1.0" />
+  </ItemGroup>
+
+  <!-- The built UI travels inside the executable. Without one (a fresh checkout), WEB_ROOT says where to find it. -->
+  <ItemGroup Condition="Exists('../web/dist/index.html')">
+    <EmbeddedResource Include="../web/dist/**" Link="wwwroot/%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
 
 </Project>

@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Builds the standalone app for each platform into dist/: a single file with the runtime and the UI inside.
+#
+#   ./publish                 builds for Linux and Windows
+#   ./publish linux-x64       builds for just the platforms named
+set -euo pipefail
+
+cd "$(dirname "$(readlink -f "$0")")"
+
+if [[ -z "${OSU_SKIN_MIXER_IN_SHELL:-}" ]] && ! { command -v dotnet && command -v npm; } >/dev/null 2>&1; then
+  export OSU_SKIN_MIXER_IN_SHELL=1
+  exec nix develop -c "$0" "$@"
+fi
+
+targets=("$@")
+[[ ${#targets[@]} -eq 0 ]] && targets=(linux-x64 win-x64)
+
+(cd web && npm ci --no-fund --no-audit && npm run build)
+
+for target in "${targets[@]}"; do
+  dotnet publish server -c Release -r "$target" -o "dist/$target" --nologo -v quiet
+  echo "built dist/$target"
+done

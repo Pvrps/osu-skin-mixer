@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Builds the web UI if needed and starts the mixer on http://127.0.0.1:${PORT:-5727}.
+# For development: builds the web UI if needed and serves the mixer on http://127.0.0.1:${PORT:-5727},
+# without opening a window. See ./publish for building the standalone app.
 set -euo pipefail
 
 cd "$(dirname "$(readlink -f "$0")")"
@@ -20,4 +21,4 @@ if [[ ! -f web/dist/index.html ]] || [[ -n "$(find web/src web/index.html web/pa
 fi
 
 export WEB_ROOT="$PWD/web/dist"
-exec dotnet run --project server -c Release --no-launch-profile -- "$@"
+exec dotnet run --project server -c Release --no-launch-profile -- --no-open "$@"
