@@ -55,10 +55,28 @@ public static class Launcher
     /// Shows the mixer: in a window of its own where a browser which can do that is installed, and otherwise as a
     /// tab in the default browser.
     /// </summary>
-    public static void Open(Platform platform, string url, bool preferWindow)
+    /// <param name="profileDir">Where the mixer's window keeps its own browser profile.</param>
+    public static void Open(Platform platform, string url, bool preferWindow, string profileDir)
     {
-        if (preferWindow && platform.FindAppWindowBrowser() is string browser && start(browser, $"--app={url}", "--new-window", "--autoplay-policy=no-user-gesture-required"))
-            return;
+        if (preferWindow && platform.FindAppWindowBrowser() is string browser)
+        {
+            // The window is given a browser profile of its own. A browser which is already running ignores the
+            // options of anything started alongside it, and the one that lets sound play without waiting for a
+            // click is what makes the preview audible from the moment it opens. A separate profile always starts
+            // a browser of its own, and keeps the mixer out of the user's history and extensions besides.
+            string[] arguments =
+            [
+                $"--app={url}",
+                $"--user-data-dir={profileDir}",
+                "--autoplay-policy=no-user-gesture-required",
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--window-size=1500,950",
+            ];
+
+            if (start(browser, arguments))
+                return;
+        }
 
         start(platform.OpenInDefaultBrowser(url));
     }

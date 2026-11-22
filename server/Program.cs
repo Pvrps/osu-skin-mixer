@@ -15,6 +15,8 @@ var platform = Platform.Current;
 string stateDir = Environment.GetEnvironmentVariable("MIXER_STATE_DIR") ?? Path.Combine(platform.AppDataHome, "osu-skin-mixer");
 Directory.CreateDirectory(stateDir);
 
+string browserProfile = Path.Combine(stateDir, "window");
+
 var location = new OsuLocation(platform, stateDir);
 string osuDir = location.Find();
 string? webRoot = Environment.GetEnvironmentVariable("WEB_ROOT");
@@ -29,7 +31,7 @@ else if (Launcher.IsMixerRunningOn(Launcher.DEFAULT_PORT))
 {
     // Starting the mixer a second time brings up the one which is already running.
     if (open)
-        Launcher.Open(platform, $"http://127.0.0.1:{Launcher.DEFAULT_PORT}", preferWindow);
+        Launcher.Open(platform, $"http://127.0.0.1:{Launcher.DEFAULT_PORT}", preferWindow, browserProfile);
 
     return;
 }
@@ -234,7 +236,7 @@ if (open)
 {
     app.Lifetime.ApplicationStarted.Register(() =>
     {
-        Launcher.Open(platform, url, preferWindow);
+        Launcher.Open(platform, url, preferWindow, browserProfile);
         sessions.WatchStartup();
     });
 }
