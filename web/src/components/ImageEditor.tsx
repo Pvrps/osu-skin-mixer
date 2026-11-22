@@ -17,6 +17,7 @@ import {
   rgbToHex,
 } from "../editor/pixels";
 import { saveEdited } from "../lib/api";
+import type { Recolour } from "../lib/recolour";
 import { fileUrl } from "../lib/skins";
 import { FloatingWindow } from "./FloatingWindow";
 
@@ -36,6 +37,8 @@ interface Props {
   /** What the element is called, for the window's title. */
   title: string;
   files: EditorFile[];
+  /** The recolouring set on this element, if any. It is done to whatever comes out of here. */
+  recolour: Recolour | null;
   onSave: (original: string, edited: string) => void;
   onRevert: (original: string) => void;
   onClose: () => void;
@@ -107,7 +110,7 @@ function checkerboard(): HTMLCanvasElement {
   return checker;
 }
 
-export function ImageEditor({ title, files, onSave, onRevert, onClose }: Props) {
+export function ImageEditor({ title, files, recolour, onSave, onRevert, onClose }: Props) {
   // The image itself, a layer for the stroke or shape being drawn, and somewhere to combine the two for display.
   const doc = useRef(makeCanvas());
   const layer = useRef(makeCanvas());
@@ -979,6 +982,16 @@ export function ImageEditor({ title, files, onSave, onRevert, onClose }: Props) 
             {status.kind === "saving" ? "Saving…" : "Save"}
           </button>
         </div>
+
+        {recolour && (
+          <div className="editor-notice">
+            <span className="chip" style={{ background: recolour.colour }} />
+            {recolour.mode === "tint"
+              ? "This element is recoloured with a tint, which turns everything in it into that one colour. Colours you paint here will come out as shades of it."
+              : "This element's hue is being shifted by its recolouring, and that goes for anything you paint here too."}{" "}
+            What you see here is the image before recolouring.
+          </div>
+        )}
 
         <div className="editor-main">
           <div className="editor-tools" role="toolbar" aria-label="Tools" aria-orientation="vertical">

@@ -199,18 +199,24 @@ function ElementView(props: Props & { entry: ElementEntry }) {
               {recolour && hasFiles ? ", recoloured" : ""}
             </strong>
             {!hasFiles && sourceId !== NONE_ID && sourceId !== DEFAULT_ID && <span className="muted">{skinsById.get(sourceId)?.name} doesn't have this, so osu! shows its own.</span>}
-            {(sourceId !== base || recolour || editedFiles.length > 0) && (
-              <button
-                className="quiet"
-                onClick={() => {
-                  if (editedFiles.length > 0) onRevertEdits(editedFiles);
-                  onRecolour(entry.element, null);
-                  onChooseElement(entry.element, groupSource);
-                }}
-              >
-                Undo changes
-              </button>
-            )}
+            {/* Each kind of change can be taken back by itself, leaving the others as they are. */}
+            <div className="undo-row">
+              {elementSources[entry.element] !== undefined && (
+                <button className="quiet" title="Take this element from the same skin as the rest of its group again" onClick={() => onChooseElement(entry.element, groupSource)}>
+                  Undo swap
+                </button>
+              )}
+              {editedFiles.length > 0 && (
+                <button className="quiet" title="Throw away what was done to it in the editor" onClick={() => onRevertEdits(editedFiles)}>
+                  Undo edit
+                </button>
+              )}
+              {recolour && (
+                <button className="quiet" title="Take the recolouring off" onClick={() => onRecolour(entry.element, null)}>
+                  Undo recolour
+                </button>
+              )}
+            </div>
           </div>
         </div>
 

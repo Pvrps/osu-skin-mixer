@@ -366,7 +366,7 @@ export function App() {
         <div className={`status ${status.kind}`} role="status">
           {status.kind === "error" && `Couldn't apply: ${status.message}`}
           {status.kind === "applying" && "Applying…"}
-          {status.kind === "applied" && !dirty && !recolouring && <>{status.created ? "Created." : "Updated."} In osu!, switch to another skin and back to see it.</>}
+          {status.kind === "applied" && !dirty && !recolouring && <>{status.created ? "Created." : "Updated."} Refresh the skin in osu! to see it.</>}
           {(status.kind === "idle" || (status.kind === "applied" && (dirty || recolouring))) &&
             (recolouring ? "Recolouring…" : dirty ? (mixSkin ? "Changes not applied yet" : "Not in osu! yet") : "Up to date in osu!")}
         </div>
@@ -454,6 +454,7 @@ export function App() {
           key={`${editing.group}/${editing.element}/${editorFiles.map((f) => f.original).join()}`}
           title={editorTitle}
           files={editorFiles}
+          recolour={selection.recolours[editing.group]?.[editing.element!] ?? null}
           onSave={setEdit}
           onRevert={(original) => setEdit(original, null)}
           onClose={() => setEditing(null)}
