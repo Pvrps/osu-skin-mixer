@@ -40,20 +40,22 @@ Where things are kept:
 ## Development
 
 For tinkering with the code. You need the .NET 10 SDK and Node 22. With [devenv](https://devenv.sh),
-`devenv shell` gives you both (and Electron), and the scripts below use it by themselves.
+`devenv shell` gives you both (and Electron), and the recipes below use it by themselves. They are run with
+[just](https://just.systems).
 
 ```sh
-./run        # serve it at http://127.0.0.1:5727, to open in a browser
-./run app    # build and open the app itself
-./publish    # build the app for the system you're on into dist/
+just dev      # serve it at http://127.0.0.1:5727, to open in a browser
+just app      # build and open the app itself
+just build    # build the app for the system you're on into dist/
+just test     # run the interface's tests
+just check    # type check the interface
 ```
 
 - `app/` is the window (Electron). It starts the server and shows the page it serves.
 - `server/` reads and writes osu!'s database (C#).
 - `web/` is the interface and the preview (TypeScript, React, PixiJS).
 - Code that differs between Linux and Windows is kept apart in `app/src/platform/` and `server/Platforms/`, one file per system.
-- In `web/`, `npm run dev` gives live reloading on port 5728 while `./run` is running, and `npm test` runs
-  the tests.
+- In `web/`, `npm run dev` gives live reloading on port 5728 while `just dev` is running.
 - The Realm package in `server/server.csproj` has to be the same version osu!lazer uses, or the database
   won't open.
 

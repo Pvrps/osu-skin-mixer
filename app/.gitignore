@@ -1,5 +1,5 @@
 node_modules/
 out/
-# The server, built and copied here by ./publish so it can be packed into the app.
+# The server, built and copied here by `just build` so it can be packed into the app.
 server/
 server-dev/

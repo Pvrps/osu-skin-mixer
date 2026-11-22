@@ -13,7 +13,7 @@
     package = pkgs.nodejs_22;
   };
 
-  packages = [pkgs.electron];
+  packages = [pkgs.electron pkgs.just];
 
   env = {
     # Realm ships a prebuilt native library that needs libstdc++ and zlib.
