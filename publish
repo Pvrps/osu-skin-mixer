@@ -12,7 +12,7 @@ cd "$(dirname "$(readlink -f "$0")")"
 
 if [[ -z "${OSU_SKIN_MIXER_IN_SHELL:-}" ]] && ! { command -v dotnet && command -v npm; } >/dev/null 2>&1; then
   export OSU_SKIN_MIXER_IN_SHELL=1
-  exec nix develop -c "$0" "$@"
+  exec devenv shell -- "$0" "$@"
 fi
 
 runtime="$(dotnet --info | sed -n 's/^ *RID: *//p' | head -n 1)"

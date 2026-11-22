@@ -39,8 +39,8 @@ Where things are kept:
 
 ## Development
 
-For tinkering with the code. You need the .NET 10 SDK and Node 22. With Nix, `nix develop` gives you both (and
-Electron), and the scripts below use it by themselves.
+For tinkering with the code. You need the .NET 10 SDK and Node 22. With [devenv](https://devenv.sh),
+`devenv shell` gives you both (and Electron), and the scripts below use it by themselves.
 
 ```sh
 ./run        # serve it at http://127.0.0.1:5727, to open in a browser

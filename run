@@ -7,10 +7,10 @@ set -euo pipefail
 
 cd "$(dirname "$(readlink -f "$0")")"
 
-# The toolchain (dotnet, node and electron) comes from the flake's dev shell.
+# The toolchain (dotnet, node and electron) comes from the devenv shell.
 if [[ -z "${OSU_SKIN_MIXER_IN_SHELL:-}" ]] && ! { command -v dotnet && command -v npm; } >/dev/null 2>&1; then
   export OSU_SKIN_MIXER_IN_SHELL=1
-  exec nix develop -c "$0" "$@"
+  exec devenv shell -- "$0" "$@"
 fi
 
 if [[ ! -d web/node_modules ]]; then
