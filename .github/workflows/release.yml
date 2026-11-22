@@ -58,9 +58,17 @@ jobs:
           npm ci --no-fund --no-audit
           npx electron-builder --publish never -c.extraMetadata.version="${GITHUB_REF_NAME#v}"
 
+      # The release says what the tag says. The tag is fetched again because a checkout leaves its message behind.
+      - name: Take the release notes from the tag
+        shell: bash
+        run: |
+          git fetch --force origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
+          git tag -l --format='%(contents)' "${GITHUB_REF_NAME}" > release-notes.md
+
+      # The files are named for their system and nothing else, so the README can link to the latest of each.
       - uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
+          body_path: release-notes.md
           files: |
             app/out/*.AppImage
             app/out/*.exe

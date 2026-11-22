@@ -17,7 +17,6 @@
   "build": {
     "appId": "dev.osuskinmixer.desktop",
     "productName": "osu-skin-mixer",
-    "artifactName": "osu-skin-mixer-${version}-${os}-${arch}.${ext}",
     "directories": {
       "output": "out",
       "buildResources": "icons"
@@ -26,15 +25,18 @@
     "extraResources": [{ "from": "server", "to": "server" }],
     "linux": {
       "target": ["AppImage"],
+      "artifactName": "osu-skin-mixer-linux.${ext}",
       "category": "Game",
       "icon": "icons/icon.png"
     },
     "win": {
       "target": ["portable"],
+      "artifactName": "osu-skin-mixer-windows.${ext}",
       "icon": "icons/icon.ico"
     },
     "mac": {
       "target": ["dmg"],
+      "artifactName": "osu-skin-mixer-macos.${ext}",
       "category": "public.app-category.games",
       "icon": "icons/icon.icns"
     }

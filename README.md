@@ -10,7 +10,12 @@ It works with osu!lazer, the osu! (standard) game mode.
 
 ## How to use it
 
-1. Download the app for your system from the Releases page and open it. There is nothing else to install.
+1. Download the app for your system and open it. There is nothing else to install.
+   - [Linux](https://github.com/Pvrps/osu-skin-mixer/releases/latest/download/osu-skin-mixer-linux.AppImage)
+   - [Windows](https://github.com/Pvrps/osu-skin-mixer/releases/latest/download/osu-skin-mixer-windows.exe)
+   - [macOS](https://github.com/Pvrps/osu-skin-mixer/releases/latest/download/osu-skin-mixer-macos.dmg)
+
+   Older versions are on the [releases page](https://github.com/Pvrps/osu-skin-mixer/releases).
 2. Type a name for your skin and choose a skin to start from.
 3. Change what you like. **Edit image** on any element opens an editor for drawing on it, erasing parts of it and changing its colours.
 4. Click **Create skin**. Your skin now shows up in osu!'s skin list.
@@ -56,6 +61,7 @@ Electron), and the scripts below use it by themselves.
 
 - The preview is close to the game but not identical.
 - The Windows and macOS versions have not been tested yet.
+- The macOS version only runs on Macs with an Apple chip (M1 or newer), not older Intel ones.
 - The first time you run it, it downloads osu!'s built-in skin so it can show default elements. That needs
   an internet connection once.
 - Only osu! (standard) is previewed. Elements for other modes can be mixed but not seen.
