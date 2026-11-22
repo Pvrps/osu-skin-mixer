@@ -19,8 +19,11 @@ the .NET 10 SDK and Node 22.
    or one sample) and each column a skin. Click a skin's name to use it for the whole category, or a single cell
    to take just that element from that skin. Hovering tries it in the preview.
 3. Under **skin.ini overrides**, set any `Section.Key` yourself. These win over whatever the chosen skins say.
-4. Press **Apply to skin**. The mix skin is created if it does not exist yet.
-5. In osu!, select the mix skin. After later changes, switch to another skin and back: lazer does not reload a
+4. The colour dot beside an image recolours it: **tint** paints the whole image in the colour you pick, **hue**
+   only shifts its colours and keeps whites and shading. The recolour sticks to the element, whichever skin it
+   comes from.
+5. Press **Apply to skin**. The mix skin is created if it does not exist yet.
+6. In osu!, select the mix skin. After later changes, switch to another skin and back: lazer does not reload a
    skin's files while it is selected.
 
 ## How it works

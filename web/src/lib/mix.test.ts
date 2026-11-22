@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { iniValue, parseIni, serializeIni } from "./ini";
 import { computeMix, isApplied, mixAsSkin } from "./mix";
 import { NONE_ID, buildNoneSkin } from "./none";
+import { recolourKey, recolourPixels } from "./recolour";
 import { type Skin, describeFile } from "./skins";
 
 function skin(id: string, ini: string, files: string[]): Skin {
@@ -25,11 +26,11 @@ describe("ini", () => {
 
 describe("computeMix", () => {
   it("needs a base", () => {
-    expect(computeMix([a, b], { base: null, overrides: {}, elements: {}, ini: {} }, "mix")).toBeNull();
+    expect(computeMix([a, b], { base: null, overrides: {}, elements: {}, recolours: {}, ini: {} }, "mix")).toBeNull();
   });
 
   it("reproduces the base skin, with fonts moved to their own prefixes", () => {
-    const mix = computeMix([a, b], { base: "a", overrides: {}, elements: {}, ini: {} }, "mix")!;
+    const mix = computeMix([a, b], { base: "a", overrides: {}, elements: {}, recolours: {}, ini: {} }, "mix")!;
     const names = mix.files.map((f) => f.name);
 
     expect(names).not.toContain("skin.ini");
@@ -49,7 +50,7 @@ describe("computeMix", () => {
   });
 
   it("takes a category's files and settings from its override, and nothing else", () => {
-    const mix = computeMix([a, b], { base: "a", overrides: { cursor: "b", numbers: "b" }, elements: {}, ini: { "Colours.SliderBorder": "1,1,1" } }, "mix")!;
+    const mix = computeMix([a, b], { base: "a", overrides: { cursor: "b", numbers: "b" }, elements: {}, recolours: {}, ini: { "Colours.SliderBorder": "1,1,1" } }, "mix")!;
     const byName = new Map(mix.files.map((f) => [f.name, f.hash]));
 
     expect(byName.get("cursor.png")).toBe("b:cursor.png");
@@ -68,7 +69,7 @@ describe("computeMix", () => {
 
   it("blanks every element of a category set to none", () => {
     const none = buildNoneSkin([a, b], new Set(["cursormiddle@2x.png", "spinnerbonus.wav", "menu-button@2x.png"]), { png: "P", wav: "W" });
-    const mix = computeMix([a, b, none], { base: "a", overrides: { cursor: NONE_ID, hitsounds: NONE_ID, numbers: NONE_ID }, elements: {}, ini: {} }, "mix")!;
+    const mix = computeMix([a, b, none], { base: "a", overrides: { cursor: NONE_ID, hitsounds: NONE_ID, numbers: NONE_ID }, elements: {}, recolours: {}, ini: {} }, "mix")!;
     const byName = new Map(mix.files.map((f) => [f.name, f.hash]));
 
     // Elements from any skin and from the built-in skin are covered, so nothing can show through.
@@ -87,7 +88,7 @@ describe("computeMix", () => {
     const d = skin("d", "", ["cursor@2x.png", "cursortrail.png", "hit300.png", "hit100.png", "normal-hitnormal.wav", "normal-hitclap.wav"]);
     const mix = computeMix(
       [c, d],
-      { base: "c", overrides: {}, elements: { cursor: { cursor: "d" }, judgement: { hit300: "d" }, hitsounds: { "normal-hitnormal": "d", "normal-hitclap": "d" } }, ini: {} },
+      { base: "c", overrides: {}, elements: { cursor: { cursor: "d" }, judgement: { hit300: "d" }, hitsounds: { "normal-hitnormal": "d", "normal-hitclap": "d" } }, recolours: {}, ini: {} },
       "mix",
     )!;
     const byName = new Map(mix.files.map((f) => [f.name, f.hash]));
@@ -107,12 +108,51 @@ describe("computeMix", () => {
     expect(byName.get("normal-hitclap.wav")).toBe("d:normal-hitclap.wav");
   });
 
+  it("swaps in recoloured images once they have been made", () => {
+    const magenta = { colour: "#ff00ff", mode: "tint" as const };
+    const c = skin("c", "", ["cursor.png", "cursortrail.jpg", "cursortrail@2x.png", "normal-hitnormal.wav"]);
+    const selection = { base: "c", overrides: {}, elements: {}, recolours: { cursor: { cursortrail: magenta } }, ini: {} };
+
+    const before = computeMix([c], selection, "mix")!;
+    expect(before.pending.map((p) => p.hash)).toEqual(["c:cursortrail.jpg", "c:cursortrail@2x.png"]);
+    expect(before.files.map((f) => f.name)).toContain("cursortrail.jpg");
+
+    const after = computeMix([c], selection, "mix", null, (hash, recolour) => `made:${recolourKey(hash, recolour)}`)!;
+    const byName = new Map(after.files.map((f) => [f.name, f.hash]));
+
+    expect(after.pending).toEqual([]);
+    expect(byName.get("cursortrail.png")).toBe("made:c:cursortrail.jpg-tint-ff00ff");
+    expect(byName.get("cursortrail@2x.png")).toBe("made:c:cursortrail@2x.png-tint-ff00ff");
+    expect(byName.has("cursortrail.jpg")).toBe(false);
+    expect(byName.get("cursor.png")).toBe("c:cursor.png");
+  });
+
   it("recognises an already applied mix", () => {
-    const selection = { base: "a", overrides: { cursor: "b" as const }, elements: {}, ini: {} };
+    const selection = { base: "a", overrides: { cursor: "b" as const }, elements: {}, recolours: {}, ini: {} };
     const mix = computeMix([a, b], selection, "mix")!;
     const applied = mixAsSkin(mix, "mix");
 
     expect(isApplied(mix, applied)).toBe(true);
     expect(isApplied(computeMix([a, b], { ...selection, overrides: {} }, "mix")!, applied)).toBe(false);
+  });
+});
+
+describe("recolourPixels", () => {
+  const run = (pixel: number[], mode: "tint" | "hue") => {
+    const data = new Uint8ClampedArray(pixel);
+    recolourPixels(data, { colour: "#ff00ff", mode });
+    return [...data];
+  };
+
+  it("tints by brightness and leaves transparency alone", () => {
+    expect(run([255, 255, 255, 40], "tint")).toEqual([255, 0, 255, 40]);
+    expect(run([0, 0, 128, 255], "tint")).toEqual([128, 0, 128, 255]);
+    expect(run([0, 0, 0, 255], "tint")).toEqual([0, 0, 0, 255]);
+  });
+
+  it("moves the hue but keeps whites and shading", () => {
+    expect(run([255, 255, 255, 255], "hue")).toEqual([255, 255, 255, 255]);
+    expect(run([0, 0, 255, 255], "hue")).toEqual([255, 0, 255, 255]);
+    expect(run([100, 100, 200, 255], "hue")).toEqual([200, 100, 200, 255]);
   });
 });

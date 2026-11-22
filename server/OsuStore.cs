@@ -33,6 +33,12 @@ public partial class OsuStore(string osuDir, string mixName, string stateDir)
     private readonly Lock writeLock = new();
     private bool backedUpThisSession;
 
+    /// <summary>
+    /// Content which is not in osu!'s file store yet but may be part of a mix, looked up by hash.
+    /// It is added to the store when a mix using it is applied.
+    /// </summary>
+    public Func<string, byte[]?> ExtraContent { get; init; } = BlankFiles.Get;
+
     public string OsuDir => osuDir;
     public string MixName => mixName;
 
@@ -129,18 +135,23 @@ public partial class OsuStore(string osuDir, string mixName, string stateDir)
             string iniHash = Convert.ToHexStringLower(SHA256.HashData(iniBytes));
             writeToStore(iniHash, iniBytes);
 
-            // ...along with the blank stand-ins, the first time a part of the skin is set to "none".
+            // ...along with anything the mixer provides itself: blank stand-ins and recoloured images.
+            var provided = new HashSet<string>();
+
             foreach (string hash in request.Files.Select(f => f.Hash).Distinct())
             {
-                if (BlankFiles.Get(hash) is byte[] blank)
-                    writeToStore(hash, blank);
+                if (ExtraContent(hash) is byte[] content)
+                {
+                    writeToStore(hash, content);
+                    provided.Add(hash);
+                }
             }
 
             using var realm = open(readOnly: false);
 
             foreach (var f in request.Files)
             {
-                if (BlankFiles.Get(f.Hash) != null)
+                if (provided.Contains(f.Hash))
                     continue;
 
                 if (realm.DynamicApi.Find("File", f.Hash) == null || !File.Exists(GetStoragePath(f.Hash)))

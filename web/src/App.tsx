@@ -5,8 +5,9 @@ import { IniPanel } from "./components/IniPanel";
 import { Preview } from "./components/Preview";
 import { applyMix, fetchDefaultIndex, fetchState, saveSelection } from "./lib/api";
 import { CATEGORIES, CATEGORY_BY_ID, type CategoryId } from "./lib/categories";
-import { type Selection, computeMix, elementSourceFor, isApplied, mixAsSkin, sourceFor } from "./lib/mix";
+import { type RecolourLookup, type Selection, computeMix, elementSourceFor, isApplied, mixAsSkin, sourceFor } from "./lib/mix";
 import { type BlankHashes, NONE_ID, buildNoneSkin, canBeNone } from "./lib/none";
+import { type Recolour, generateRecolour, isRecolour, recolourKey } from "./lib/recolour";
 import { type Skin, loadSkin } from "./lib/skins";
 
 interface Loaded {
@@ -49,13 +50,22 @@ function sanitise(saved: Partial<Selection> | null, sources: Skin[]): Selection 
     if (Object.keys(kept).length > 0) elements[category as CategoryId] = kept;
   }
 
+  const recolours: Selection["recolours"] = {};
+
+  for (const [category, chosen] of Object.entries(saved?.recolours ?? {})) {
+    if (!CATEGORY_BY_ID.has(category as CategoryId)) continue;
+
+    const kept = Object.fromEntries(Object.entries(chosen ?? {}).filter(([, recolour]) => isRecolour(recolour)));
+    if (Object.keys(kept).length > 0) recolours[category as CategoryId] = kept;
+  }
+
   const ini: Record<string, string> = {};
 
   for (const [path, value] of Object.entries(saved?.ini ?? {})) {
     if (typeof value === "string" && path.includes(".")) ini[path] = value;
   }
 
-  return { base: saved?.base && known.has(saved.base) ? saved.base : null, overrides, elements, ini };
+  return { base: saved?.base && known.has(saved.base) ? saved.base : null, overrides, elements, recolours, ini };
 }
 
 async function load(): Promise<{ loaded: Loaded; selection: Selection }> {
@@ -70,7 +80,7 @@ async function load(): Promise<{ loaded: Loaded; selection: Selection }> {
 }
 
 const countElements = (selection: Selection, category?: CategoryId) =>
-  Object.entries(selection.elements).reduce((total, [id, chosen]) => total + (category === undefined || category === id ? Object.keys(chosen ?? {}).length : 0), 0);
+  [...Object.entries(selection.elements), ...Object.entries(selection.recolours)].reduce((total, [id, chosen]) => total + (category === undefined || category === id ? Object.keys(chosen ?? {}).length : 0), 0);
 
 export function App() {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
@@ -126,9 +136,13 @@ export function App() {
     [loaded],
   );
 
+  // Recoloured images are made in the background. Until one is ready the mix shows the original in its place.
+  const [recoloured, setRecoloured] = useState<Map<string, string>>(() => new Map());
+  const lookup = useCallback<RecolourLookup>((hash, recolour) => recoloured.get(recolourKey(hash, recolour)), [recoloured]);
+
   const mix = useMemo(
-    () => (loaded && selection ? computeMix(mixable, selection, loaded.mixName, loaded.mix) : null),
-    [loaded, selection, mixable],
+    () => (loaded && selection ? computeMix(mixable, selection, loaded.mixName, loaded.mix, lookup) : null),
+    [loaded, selection, mixable, lookup],
   );
 
   // What each setting would be without manual values, shown as the placeholder in the settings panel.
@@ -142,7 +156,7 @@ export function App() {
     if (!selection || !hover || view === "ini") return null;
 
     if (hover.element === null) {
-      if (hover.skinId === sourceFor(selection, view, skinsById)?.id && countElements(selection, view) === 0) return null;
+      if (hover.skinId === sourceFor(selection, view, skinsById)?.id && Object.keys(selection.elements[view] ?? {}).length === 0) return null;
 
       const { [view]: _, ...elements } = selection.elements;
       return { ...selection, overrides: { ...selection.overrides, [view]: hover.skinId }, elements };
@@ -154,17 +168,32 @@ export function App() {
   }, [selection, hover, view, skinsById]);
 
   // Hovering shows what the mix would look like, without committing to anything.
-  const previewSkin = useMemo(() => {
-    if (!loaded) return null;
+  const shown = useMemo(
+    () => (loaded && trial ? computeMix(mixable, trial, loaded.mixName, loaded.mix, lookup) : mix),
+    [loaded, trial, mix, mixable, lookup],
+  );
+  const previewSkin = useMemo(() => (loaded && shown ? mixAsSkin(shown, loaded.mixName) : null), [loaded, shown]);
 
-    const shown = trial ? computeMix(mixable, trial, loaded.mixName, loaded.mix) : mix;
-    return shown ? mixAsSkin(shown, loaded.mixName) : null;
-  }, [loaded, trial, mix, mixable]);
+  const requested = useRef(new Set<string>());
+
+  useEffect(() => {
+    for (const { name, hash, recolour } of [...(mix?.pending ?? []), ...(shown?.pending ?? [])]) {
+      const key = recolourKey(hash, recolour);
+      if (requested.current.has(key)) continue;
+
+      requested.current.add(key);
+      generateRecolour({ name, hash }, recolour)
+        .then((made) => setRecoloured((known) => new Map(known).set(key, made)))
+        .catch((e: Error) => setStatus({ kind: "error", message: e.message }));
+    }
+  }, [mix, shown]);
+
+  const recolouring = (mix?.pending.length ?? 0) > 0;
 
   // Until the list of built-in elements has arrived, a "none" in the selection can't be resolved, so hold off judging.
   const usesNone =
     selection !== null && (Object.values(selection.overrides).includes(NONE_ID) || Object.values(selection.elements).some((chosen) => Object.values(chosen ?? {}).includes(NONE_ID)));
-  const dirty = mix !== null && (!usesNone || noneSkin !== null) && !isApplied(mix, loaded?.mix);
+  const dirty = mix !== null && !recolouring && (!usesNone || noneSkin !== null) && !isApplied(mix, loaded?.mix);
 
   const update = (change: (s: Selection) => Selection) => {
     setSelection((s) => (s ? change(s) : s));
@@ -195,6 +224,17 @@ export function App() {
       return { ...s, elements: Object.keys(chosen).length > 0 ? { ...elements, [categoryId]: chosen } : elements };
     });
 
+  const setRecolour = (categoryId: CategoryId, element: string, recolour: Recolour | null) =>
+    update((s) => {
+      const chosen = { ...s.recolours[categoryId] };
+
+      if (recolour) chosen[element] = recolour;
+      else delete chosen[element];
+
+      const { [categoryId]: _, ...recolours } = s.recolours;
+      return { ...s, recolours: Object.keys(chosen).length > 0 ? { ...recolours, [categoryId]: chosen } : recolours };
+    });
+
   const setBase = (skinId: string) =>
     update((s) => {
       // An override pointing at the new base is no longer an override.
@@ -213,7 +253,7 @@ export function App() {
     });
 
   const apply = async () => {
-    if (!mix || !selection) return;
+    if (!mix || !selection || mix.pending.length > 0) return;
 
     setStatus({ kind: "applying" });
 
@@ -302,7 +342,7 @@ export function App() {
           </select>
         </label>
 
-        <button className="quiet" disabled={changeCount === 0} onClick={() => update((s) => ({ ...s, overrides: {}, elements: {}, ini: {} }))}>
+        <button className="quiet" disabled={changeCount === 0} onClick={() => update((s) => ({ ...s, overrides: {}, elements: {}, recolours: {}, ini: {} }))}>
           Reset to base
         </button>
 
@@ -316,8 +356,8 @@ export function App() {
               {status.created ? `Created "${loaded.mixName}".` : `Updated "${loaded.mixName}".`} In osu!, switch to another skin and back to see it.
             </>
           )}
-          {(status.kind === "idle" || (status.kind === "applied" && dirty)) &&
-            (dirty ? (loaded.mix ? "Changes not applied yet" : `"${loaded.mixName}" will be created`) : `"${loaded.mixName}" is up to date`)}
+          {(status.kind === "idle" || (status.kind === "applied" && (dirty || recolouring))) &&
+            (recolouring ? "Recolouring…" : dirty ? (loaded.mix ? "Changes not applied yet" : `"${loaded.mixName}" will be created`) : `"${loaded.mixName}" is up to date`)}
         </div>
 
         <button className="primary" disabled={!dirty || status.kind === "applying"} onClick={() => void apply()}>
@@ -348,7 +388,7 @@ export function App() {
                   <span className={`category-source${overridden ? " overridden" : ""}`}>
                     <span className="dot" />
                     <span className="category-source-name">{source?.name}</span>
-                    {exceptions > 0 && <span className="mixed">+{exceptions} mixed</span>}
+                    {exceptions > 0 && <span className="mixed">+{exceptions} changed</span>}
                   </span>
                 </button>
               );
@@ -379,7 +419,8 @@ export function App() {
             <div className="browser-head">
               <h2>{current.label}</h2>
               <span className="muted">
-                {current.hint}. Click a skin's name to use it for all of these, or a single cell to take just that element. Hover to try.
+                {current.hint}. Click a skin's name to use it for all of these, or a single cell to take just that element. Hover to try. The colour dot
+                beside an image recolours it.
               </span>
             </div>
             <div className="browser-body">
@@ -390,10 +431,12 @@ export function App() {
                 none={canBeNone(current.id) ? noneSkin : null}
                 categorySource={sourceFor(selection, current.id, skinsById)?.id ?? null}
                 elementSources={selection.elements[current.id] ?? {}}
+                recolours={selection.recolours[current.id] ?? {}}
                 base={selection.base}
                 colourOf={colourOf}
                 onSelectCategory={(skinId) => chooseCategory(current.id, skinId)}
                 onSelectElement={(element, skinId) => chooseElement(current.id, element, skinId)}
+                onRecolour={(element, recolour) => setRecolour(current.id, element, recolour)}
                 onHover={setHover}
               />
               <IniPanel category={current} inherited={inherited} overrides={selection.ini} onChange={setIni} />

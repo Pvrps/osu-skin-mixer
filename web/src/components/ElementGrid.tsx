@@ -1,7 +1,8 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { CategoryDef, EmittedFile } from "../lib/categories";
 import { categoriesOf } from "../lib/mix";
 import { NONE_ID } from "../lib/none";
+import type { Recolour } from "../lib/recolour";
 import { AUDIO_EXTS, IMAGE_EXTS, type Skin, fileUrl } from "../lib/skins";
 
 interface Props {
@@ -13,10 +14,13 @@ interface Props {
   categorySource: string | null;
   /** Elements taken from somewhere other than the category's skin. */
   elementSources: Record<string, string>;
+  /** Elements whose images are being recoloured. */
+  recolours: Record<string, Recolour>;
   base: string | null;
   colourOf: (skinId: string) => string;
   onSelectCategory: (skinId: string) => void;
   onSelectElement: (element: string, skinId: string) => void;
+  onRecolour: (element: string, recolour: Recolour | null) => void;
   onHover: (target: { skinId: string; element: string | null } | null) => void;
 }
 
@@ -32,6 +36,8 @@ function playSample(url: string) {
 interface Row {
   element: string;
   label: string;
+  /** Whether the element is an image, and so can be recoloured. */
+  image: boolean;
   /** The file standing for the element in each skin which has it, and how many files it is made of there. */
   bySkin: Map<string, { shown: EmittedFile; count: number }>;
 }
@@ -62,9 +68,59 @@ function buildRows(category: CategoryDef, skins: Skin[]): Row[] {
       element,
       // Font glyphs are named for where they end up in the mix, which means nothing to the reader.
       label: category.font ? element.slice(category.font.outPrefix.length + 1) : element,
+      image: [...bySkin.values()].some((files) => files.some((f) => IMAGE_EXTS.has(f.source.ext))),
       bySkin: new Map([...bySkin].map(([skinId, files]) => [skinId, { shown: representative(files), count: files.length }])),
     }))
     .sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }));
+}
+
+function RecolourControl({ label, value, onChange }: { label: string; value: Recolour | undefined; onChange: (recolour: Recolour | null) => void }) {
+  // Dragging around the colour picker reports every colour passed over. Only the one settled on is worth making.
+  const [draft, setDraft] = useState<string | null>(null);
+  const timer = useRef<number | undefined>(undefined);
+
+  useEffect(() => () => clearTimeout(timer.current), []);
+
+  const colour = draft ?? value?.colour;
+
+  const pick = (picked: string) => {
+    setDraft(picked);
+    clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => {
+      onChange({ colour: picked, mode: value?.mode ?? "tint" });
+      setDraft(null);
+    }, 250);
+  };
+
+  return (
+    <span className="recolour">
+      {value && (
+        <>
+          <button
+            className="mini"
+            title={value.mode === "tint" ? "Tint: the whole image becomes this colour. Click to only shift its hue, keeping whites and shading." : "Hue: only the image's colours change. Click to tint the whole image instead."}
+            onClick={() => onChange({ ...value, mode: value.mode === "tint" ? "hue" : "tint" })}
+          >
+            {value.mode}
+          </button>
+          <button
+            className="mini"
+            title="Back to the original colours"
+            onClick={() => {
+              clearTimeout(timer.current);
+              setDraft(null);
+              onChange(null);
+            }}
+          >
+            ×
+          </button>
+        </>
+      )}
+      <label className={`swatch${colour ? " set" : ""}`} style={colour ? { background: colour } : undefined} title={`Recolour ${label}`}>
+        <input type="color" aria-label={`Colour for ${label}`} value={colour ?? "#ffffff"} onChange={(e) => pick(e.target.value)} />
+      </label>
+    </span>
+  );
 }
 
 function Cell({ row, skin, isNone, silent, selected, colour, onSelect, onHover }: {
@@ -134,7 +190,7 @@ function Cell({ row, skin, isNone, silent, selected, colour, onSelect, onHover }
   );
 }
 
-export function ElementGrid({ category, skins, none, categorySource, elementSources, base, colourOf, onSelectCategory, onSelectElement, onHover }: Props) {
+export function ElementGrid({ category, skins, none, categorySource, elementSources, recolours, base, colourOf, onSelectCategory, onSelectElement, onRecolour, onHover }: Props) {
   const [filter, setFilter] = useState("");
 
   const columns = useMemo(() => (none ? [...skins, none] : skins), [skins, none]);
@@ -181,8 +237,11 @@ export function ElementGrid({ category, skins, none, categorySource, elementSour
 
         return (
           <div className="grid-row" key={row.element}>
-            <div className={`grid-label${elementSources[row.element] ? " overridden" : ""}`} title={row.element}>
-              {row.label}
+            <div className={`grid-label${elementSources[row.element] || recolours[row.element] ? " overridden" : ""}`}>
+              <span className="grid-label-name" title={row.element}>
+                {row.label}
+              </span>
+              {row.image && <RecolourControl label={row.label} value={recolours[row.element]} onChange={(recolour) => onRecolour(row.element, recolour)} />}
             </div>
             {columns.map((skin) => (
               <Cell

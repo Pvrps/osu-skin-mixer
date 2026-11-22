@@ -1,9 +1,8 @@
 import { CATEGORIES, type CategoryId } from "./categories";
-import { categoriesOf } from "./mix";
+import { NONE_ID, categoriesOf } from "./mix";
 import { AUDIO_EXTS, IMAGE_EXTS, type Skin, describeFile } from "./skins";
 
-/** The id standing in for a skin when a category is set to show or play nothing. */
-export const NONE_ID = "none";
+export { NONE_ID };
 
 /** Hashes of the invisible image and silent sample the server provides. */
 export interface BlankHashes {

@@ -1,6 +1,10 @@
 import { CATEGORIES, CLAIMED_INI_KEYS, type CategoryId, type EmittedFile, categorise } from "./categories";
 import { type IniSection, iniValue, serializeIni } from "./ini";
-import { type Skin, describeFile } from "./skins";
+import { type Recolour } from "./recolour";
+import { IMAGE_EXTS, type Skin, describeFile } from "./skins";
+
+/** The id standing in for a skin when something is set to show or play nothing. */
+export const NONE_ID = "none";
 
 export interface Selection {
   /** The skin every category comes from unless overridden. */
@@ -8,11 +12,13 @@ export interface Selection {
   overrides: Partial<Record<CategoryId, string>>;
   /** Individual elements taken from a different skin than the rest of their category. */
   elements: Partial<Record<CategoryId, Record<string, string>>>;
+  /** Images given a different colour, by element. This applies whichever skin the element comes from. */
+  recolours: Partial<Record<CategoryId, Record<string, Recolour>>>;
   /** Manual skin.ini values, keyed as `Section.Key`. These win over everything else. */
   ini: Record<string, string>;
 }
 
-export const EMPTY_SELECTION: Selection = { base: null, overrides: {}, elements: {}, ini: {} };
+export const EMPTY_SELECTION: Selection = { base: null, overrides: {}, elements: {}, recolours: {}, ini: {} };
 
 export interface MixFile {
   name: string;
@@ -24,7 +30,18 @@ export interface Mix {
   ini: IniSection[];
   iniText: string;
   sources: Map<CategoryId, Skin>;
+  /** Recoloured images which have not been made yet. Until they are, the mix holds the originals in their place. */
+  pending: PendingRecolour[];
 }
+
+export interface PendingRecolour {
+  name: string;
+  hash: string;
+  recolour: Recolour;
+}
+
+/** Looks up the hash of an image's recoloured version, if it has been made. */
+export type RecolourLookup = (hash: string, recolour: Recolour) => string | undefined;
 
 const categorised = new WeakMap<Skin, Map<CategoryId, EmittedFile[]>>();
 
@@ -61,7 +78,7 @@ const lowerName = (name: string) => name.replace(/\\/g, "/").toLowerCase();
  *
  * Returns null until a base skin has been chosen.
  */
-export function computeMix(sources: Skin[], selection: Selection, mixName: string, existingMix?: Skin | null): Mix | null {
+export function computeMix(sources: Skin[], selection: Selection, mixName: string, existingMix?: Skin | null, recoloured?: RecolourLookup): Mix | null {
   const byId = new Map(sources.map((s) => [s.id, s]));
   const chosen = new Map<CategoryId, Skin>();
 
@@ -73,6 +90,24 @@ export function computeMix(sources: Skin[], selection: Selection, mixName: strin
   }
 
   const files = new Map<string, MixFile>();
+  const pending: PendingRecolour[] = [];
+
+  const emit = (category: CategoryId, skin: Skin, file: EmittedFile) => {
+    let { name, hash } = file;
+    const recolour = selection.recolours[category]?.[file.element];
+
+    if (recolour && skin.id !== NONE_ID && IMAGE_EXTS.has(file.source.ext)) {
+      const done = recoloured?.(hash, recolour);
+
+      if (done) {
+        hash = done;
+        // Recoloured images are always PNGs, whatever they started as.
+        name = name.replace(/\.[^./\\]+$/, ".png");
+      } else pending.push({ name, hash, recolour });
+    }
+
+    files.set(lowerName(file.name), { name, hash });
+  };
 
   for (const category of CATEGORIES) {
     const source = chosen.get(category.id)!;
@@ -86,13 +121,13 @@ export function computeMix(sources: Skin[], selection: Selection, mixName: strin
     }
 
     for (const file of categoriesOf(source).get(category.id)!) {
-      if (!replaced.has(file.element)) files.set(lowerName(file.name), { name: file.name, hash: file.hash });
+      if (!replaced.has(file.element)) emit(category.id, source, file);
     }
 
     // A replaced element is taken whole: if the other skin doesn't have it, the game's default shows instead.
     for (const [element, skin] of replaced) {
       for (const file of categoriesOf(skin).get(category.id)!) {
-        if (file.element === element) files.set(lowerName(file.name), { name: file.name, hash: file.hash });
+        if (file.element === element) emit(category.id, skin, file);
       }
     }
   }
@@ -115,6 +150,7 @@ export function computeMix(sources: Skin[], selection: Selection, mixName: strin
     ini,
     iniText: serializeIni(ini),
     sources: chosen,
+    pending,
   };
 }
 

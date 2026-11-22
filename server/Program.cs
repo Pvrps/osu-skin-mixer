@@ -21,7 +21,8 @@ builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.PropertyNamin
 
 var app = builder.Build();
 
-var store = new OsuStore(osuDir, mixName, stateDir);
+var generated = new GeneratedFiles(Path.Combine(stateDir, "generated"));
+var store = new OsuStore(osuDir, mixName, stateDir) { ExtraContent = hash => BlankFiles.Get(hash) ?? generated.Get(hash) };
 var defaults = new DefaultSkinCache(Path.Combine(stateDir, "default-skin"));
 var contentTypes = new FileExtensionContentTypeProvider();
 string selectionPath = Path.Combine(stateDir, "selection.json");
@@ -79,6 +80,10 @@ app.MapGet("/api/file/{hash}/{*name}", (string hash, string? name, HttpContext c
 
     string path = store.GetStoragePath(hash);
 
+    // Recoloured images live with the mixer until they are applied.
+    if (!File.Exists(path) && generated.GetPath(hash) is string generatedPath)
+        path = generatedPath;
+
     if (!File.Exists(path))
     {
         context.Response.Headers.CacheControl = "no-store";
@@ -86,6 +91,16 @@ app.MapGet("/api/file/{hash}/{*name}", (string hash, string? name, HttpContext c
     }
 
     return Results.File(path, contentTypeFor(name));
+});
+
+// Recoloured images are made in the browser, by the same code which decides what goes into the mix.
+app.MapGet("/api/generated/{key}", (string key) => generated.Find(key) is string hash ? Results.Ok(new { hash }) : Results.NotFound());
+
+app.MapPost("/api/generated/{key}", async (string key, HttpRequest request) =>
+{
+    using var body = new MemoryStream();
+    await request.Body.CopyToAsync(body);
+    return Results.Ok(new { hash = generated.Save(key, body.ToArray()) });
 });
 
 // lazer falls back to its built-in classic skin for anything a legacy skin does not provide.
