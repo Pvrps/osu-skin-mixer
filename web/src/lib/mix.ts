@@ -1,0 +1,201 @@
+import { CATEGORIES, CLAIMED_INI_KEYS, type CategoryId, type EmittedFile, categorise } from "./categories";
+import { type IniSection, iniValue, serializeIni } from "./ini";
+import { type Skin, describeFile } from "./skins";
+
+export interface Selection {
+  /** The skin every category comes from unless overridden. */
+  base: string | null;
+  overrides: Partial<Record<CategoryId, string>>;
+  /** Manual skin.ini values, keyed as `Section.Key`. These win over everything else. */
+  ini: Record<string, string>;
+}
+
+export const EMPTY_SELECTION: Selection = { base: null, overrides: {}, ini: {} };
+
+export interface MixFile {
+  name: string;
+  hash: string;
+}
+
+export interface Mix {
+  files: MixFile[];
+  ini: IniSection[];
+  iniText: string;
+  sources: Map<CategoryId, Skin>;
+}
+
+const categorised = new WeakMap<Skin, Map<CategoryId, EmittedFile[]>>();
+
+export function categoriesOf(skin: Skin): Map<CategoryId, EmittedFile[]> {
+  let result = categorised.get(skin);
+
+  if (!result) {
+    result = categorise(skin);
+    categorised.set(skin, result);
+  }
+
+  return result;
+}
+
+export function sourceFor(selection: Selection, category: CategoryId, skins: Map<string, Skin>): Skin | null {
+  const override = selection.overrides[category];
+  const overridden = override ? skins.get(override) : undefined;
+
+  return overridden ?? (selection.base ? (skins.get(selection.base) ?? null) : null);
+}
+
+const lowerName = (name: string) => name.replace(/\\/g, "/").toLowerCase();
+
+/**
+ * Builds the mix: for every category, the files and configuration of whichever skin was chosen for it.
+ *
+ * Returns null until a base skin has been chosen.
+ */
+export function computeMix(sources: Skin[], selection: Selection, mixName: string, existingMix?: Skin | null): Mix | null {
+  const byId = new Map(sources.map((s) => [s.id, s]));
+  const chosen = new Map<CategoryId, Skin>();
+
+  for (const category of CATEGORIES) {
+    const skin = sourceFor(selection, category.id, byId);
+    if (!skin) return null;
+
+    chosen.set(category.id, skin);
+  }
+
+  const files = new Map<string, MixFile>();
+
+  for (const category of CATEGORIES) {
+    for (const file of categoriesOf(chosen.get(category.id)!).get(category.id)!) {
+      files.set(lowerName(file.name), { name: file.name, hash: file.hash });
+    }
+  }
+
+  // Layouts saved from lazer's own skin editor live in the mix as .json files. Keep any which did not come from a
+  // source skin, so mixing never throws away HUD customisation done in game.
+  if (existingMix) {
+    for (const file of existingMix.files) {
+      if (!file.root || file.ext !== "json") continue;
+
+      const cameFromSource = sources.some((s) => s.files.some((f) => f.hash === file.hash && lowerName(f.name) === lowerName(file.name)));
+      if (!cameFromSource) files.set(lowerName(file.name), { name: file.name, hash: file.hash });
+    }
+  }
+
+  const ini = buildIni(chosen, selection, mixName);
+
+  return {
+    files: [...files.values()].sort((a, b) => a.name.localeCompare(b.name)),
+    ini,
+    iniText: serializeIni(ini),
+    sources: chosen,
+  };
+}
+
+function buildIni(chosen: Map<CategoryId, Skin>, selection: Selection, mixName: string): IniSection[] {
+  const general = new Map<string, string>([
+    ["Name", mixName],
+    ["Author", "osu-skin-mixer"],
+  ]);
+  const colours = new Map<string, string>();
+  const fonts = new Map<string, string>();
+
+  const rest = chosen.get("other")!.ini;
+
+  // Anything not owned by a category (version, animation framerate, ...) follows the "everything else" skin.
+  copyUnclaimed(rest, "General", CLAIMED_INI_KEYS.general, general);
+  copyUnclaimed(rest, "Colours", CLAIMED_INI_KEYS.colours, colours);
+  copyUnclaimed(rest, "Fonts", CLAIMED_INI_KEYS.fonts, fonts);
+
+  for (const category of CATEGORIES) {
+    const source = chosen.get(category.id)!.ini;
+
+    for (const key of category.ini.General ?? []) copyKey(source, "General", key, general);
+    for (const key of category.ini.Colours ?? []) copyKey(source, "Colours", key, colours);
+
+    if (category.font) {
+      // Always point at the mix's own glyph location. When the source has no glyphs, lazer finds nothing there
+      // and falls back to its default font, exactly as it would for the source skin.
+      fonts.set(category.font.prefixKey, category.font.outPrefix);
+      copyKey(source, "Fonts", category.font.overlapKey, fonts);
+    }
+  }
+
+  const sections: IniSection[] = [
+    { name: "General", entries: toEntries(general) },
+    { name: "Colours", entries: toEntries(colours) },
+    { name: "Fonts", entries: toEntries(fonts) },
+  ];
+
+  for (const section of rest) {
+    if (!["general", "colours", "fonts"].includes(section.name.toLowerCase())) sections.push({ name: section.name, entries: [...section.entries] });
+  }
+
+  for (const [path, value] of Object.entries(selection.ini)) {
+    const dot = path.indexOf(".");
+    if (dot < 0 || value.trim().length === 0) continue;
+
+    setValue(sections, path.slice(0, dot), path.slice(dot + 1), value.trim());
+  }
+
+  return sections;
+}
+
+function copyKey(source: IniSection[], section: string, key: string, into: Map<string, string>) {
+  const value = iniValue(source, section, key);
+  if (value !== undefined) into.set(key, value);
+}
+
+function copyUnclaimed(source: IniSection[], section: string, claimed: Set<string>, into: Map<string, string>) {
+  for (const s of source) {
+    if (s.name.toLowerCase() !== section.toLowerCase()) continue;
+
+    for (const e of s.entries) {
+      if (!claimed.has(e.key.toLowerCase())) into.set(e.key, e.value);
+    }
+  }
+}
+
+const toEntries = (map: Map<string, string>) => [...map].map(([key, value]) => ({ key, value }));
+
+function setValue(sections: IniSection[], sectionName: string, key: string, value: string) {
+  let section = sections.find((s) => s.name.toLowerCase() === sectionName.toLowerCase());
+
+  if (!section) {
+    section = { name: sectionName, entries: [] };
+    sections.push(section);
+  }
+
+  const existing = section.entries.find((e) => e.key.toLowerCase() === key.toLowerCase());
+
+  if (existing) existing.value = value;
+  else section.entries.push({ key, value });
+}
+
+/** Whether the mix skin in the game already has exactly these contents. */
+export function isApplied(mix: Mix, existingMix: Skin | null | undefined): boolean {
+  if (!existingMix) return false;
+
+  const existing = new Map<string, string>();
+
+  for (const file of existingMix.files) {
+    if (file.root && file.stem === "skin" && file.ext === "ini") continue;
+    existing.set(lowerName(file.name), file.hash);
+  }
+
+  if (existing.size !== mix.files.length) return false;
+  if (mix.files.some((f) => existing.get(lowerName(f.name)) !== f.hash)) return false;
+
+  return serializeIni(existingMix.ini) === mix.iniText;
+}
+
+/** Turns a mix into the same shape as a skin read from the game, for the preview. */
+export function mixAsSkin(mix: Mix, name: string): Skin {
+  return {
+    id: "preview",
+    name,
+    creator: "",
+    isMix: true,
+    files: mix.files.map((f) => describeFile(f.name, f.hash)),
+    ini: mix.ini,
+  };
+}

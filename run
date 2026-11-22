@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Builds the web UI if needed and starts the mixer on http://127.0.0.1:${PORT:-5727}.
+set -euo pipefail
+
+cd "$(dirname "$(readlink -f "$0")")"
+
+# The toolchain (dotnet, node, and the native libraries Realm needs) comes from the flake's dev shell.
+if [[ -z "${OSU_SKIN_MIXER_IN_SHELL:-}" ]] && ! { command -v dotnet && command -v npm; } >/dev/null 2>&1; then
+  export OSU_SKIN_MIXER_IN_SHELL=1
+  exec nix develop -c "$0" "$@"
+fi
+
+if [[ ! -d web/node_modules ]]; then
+  (cd web && npm ci --no-fund --no-audit)
+fi
+
+# Rebuild the UI only when its sources are newer than the last build.
+if [[ ! -f web/dist/index.html ]] || [[ -n "$(find web/src web/index.html web/package.json web/vite.config.ts -newer web/dist/index.html -print -quit)" ]]; then
+  (cd web && npm run build)
+fi
+
+export WEB_ROOT="$PWD/web/dist"
+exec dotnet run --project server -c Release --no-launch-profile -- "$@"
