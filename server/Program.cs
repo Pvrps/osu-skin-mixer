@@ -55,6 +55,9 @@ app.MapGet("/api/state", () => new
     selection = File.Exists(selectionPath) ? JsonSerializer.Deserialize<JsonElement>(File.ReadAllText(selectionPath)) : (JsonElement?)null,
 });
 
+// The preview plays real beatmaps where the game has any.
+app.MapGet("/api/beatmaps", () => store.GetBeatmaps());
+
 app.MapPut("/api/selection", async (JsonElement selection) =>
 {
     string temp = selectionPath + ".tmp";

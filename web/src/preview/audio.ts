@@ -1,20 +1,18 @@
 import type { PreviewSkin } from "./assets";
-import type { SoundName } from "./scene";
 
-const SAMPLE_LOOKUPS: Record<SoundName, string[]> = {
-  hit: ["normal-hitnormal", "soft-hitnormal"],
-  tick: ["normal-slidertick", "soft-slidertick"],
-  break: ["combobreak"],
-  bonus: ["spinnerbonus"],
-};
+// Loaded as soon as sound is on, so the first hits of a song aren't silent while their samples are fetched.
+const COMMON_SAMPLES = ["normal-hitnormal", "soft-hitnormal", "drum-hitnormal", "normal-slidertick", "soft-slidertick", "combobreak", "spinnerbonus"];
 
-/** Plays the mix's hitsounds in time with the preview. */
+/** Plays the mix's hitsounds, and the song they belong to, in time with the preview. */
 export class PreviewAudio {
   private context: AudioContext | null = null;
   private gain: GainNode | null = null;
-  private buffers = new Map<SoundName, AudioBuffer>();
+  private skin: PreviewSkin | null = null;
+  /** Samples of the current skin by name. Null marks one the skin and the game both lack. */
+  private samples = new Map<string, AudioBuffer | null | Promise<void>>();
   private readonly decoded = new Map<string, Promise<AudioBuffer | null>>();
-  private generation = 0;
+  private music: HTMLAudioElement | null = null;
+  private volume = 0.6;
 
   enabled = false;
 
@@ -23,48 +21,53 @@ export class PreviewAudio {
     if (!this.context) {
       this.context = new AudioContext();
       this.gain = this.context.createGain();
-      this.gain.gain.value = 0.45;
       this.gain.connect(this.context.destination);
     }
 
     void this.context.resume();
     this.enabled = true;
+    this.setVolume(this.volume);
+
+    for (const name of COMMON_SAMPLES) this.load(name);
   }
 
   disable() {
     this.enabled = false;
+    this.music?.pause();
   }
 
-  async setSkin(skin: PreviewSkin) {
-    if (!this.context) {
-      this.pendingSkin = skin;
+  setVolume(volume: number) {
+    this.volume = volume;
+
+    // Hit sounds are mixed a little above the song, as most players have them.
+    if (this.gain) this.gain.gain.value = volume * 0.7;
+    if (this.music) this.music.volume = Math.min(1, volume * 0.55);
+  }
+
+  setSkin(skin: PreviewSkin) {
+    this.skin = skin;
+    this.samples = new Map();
+
+    if (this.enabled) for (const name of COMMON_SAMPLES) this.load(name);
+  }
+
+  private load(name: string) {
+    if (!this.skin || !this.context || this.samples.has(name)) return;
+
+    const samples = this.samples;
+    const url = this.skin.sampleUrl(name);
+
+    if (!url) {
+      samples.set(name, null);
       return;
     }
 
-    const generation = ++this.generation;
-    const next = new Map<SoundName, AudioBuffer>();
-
-    await Promise.all(
-      (Object.keys(SAMPLE_LOOKUPS) as SoundName[]).map(async (sound) => {
-        const url = skin.sampleUrl(...SAMPLE_LOOKUPS[sound]);
-        const buffer = url ? await this.decode(url) : null;
-
-        if (buffer) next.set(sound, buffer);
+    samples.set(
+      name,
+      this.decode(url).then((buffer) => {
+        samples.set(name, buffer);
       }),
     );
-
-    if (generation === this.generation) this.buffers = next;
-  }
-
-  private pendingSkin: PreviewSkin | null = null;
-
-  /** Loads samples for whichever skin was set before audio was first enabled. */
-  async loadPending() {
-    if (this.pendingSkin) {
-      const skin = this.pendingSkin;
-      this.pendingSkin = null;
-      await this.setSkin(skin);
-    }
   }
 
   private decode(url: string): Promise<AudioBuffer | null> {
@@ -81,17 +84,67 @@ export class PreviewAudio {
     return pending;
   }
 
-  play(sound: SoundName) {
-    const buffer = this.buffers.get(sound);
-    if (!this.enabled || !this.context || !this.gain || !buffer) return;
+  play(names: string[]) {
+    if (!this.enabled || !this.context || !this.gain) return;
 
-    const source = this.context.createBufferSource();
-    source.buffer = buffer;
-    source.connect(this.gain);
-    source.start();
+    for (const name of names) {
+      const buffer = this.samples.get(name);
+
+      // A sample heard for the first time is fetched now and played from the next time on.
+      if (buffer === undefined) this.load(name);
+      if (!(buffer instanceof AudioBuffer)) continue;
+
+      const source = this.context.createBufferSource();
+      source.buffer = buffer;
+      source.connect(this.gain);
+      source.start();
+    }
+  }
+
+  // ---- the song -----------------------------------------------------------------------------------------------
+
+  setMusic(url: string | null) {
+    this.music?.pause();
+    this.music = null;
+
+    if (url) {
+      this.music = new Audio(url);
+      this.music.preload = "auto";
+      this.setVolume(this.volume);
+    }
+  }
+
+  /** Starts or stops the song so that it matches what the preview is doing. */
+  syncMusic(playing: boolean, time: number) {
+    const music = this.music;
+    if (!music) return;
+
+    if (!this.enabled || !playing) {
+      music.pause();
+      return;
+    }
+
+    if (music.paused) {
+      music.currentTime = Math.max(0, time / 1000);
+      void music.play().catch(() => {});
+    }
+  }
+
+  seekMusic(time: number) {
+    if (this.music) this.music.currentTime = Math.max(0, time / 1000);
+  }
+
+  /** Where the song is, in milliseconds, while it is actually sounding. */
+  musicTime(): number | null {
+    const music = this.music;
+    if (!music || !this.enabled || music.paused || music.seeking || music.readyState < 3) return null;
+
+    return music.currentTime * 1000;
   }
 
   destroy() {
+    this.music?.pause();
+    this.music = null;
     void this.context?.close();
     this.context = null;
   }

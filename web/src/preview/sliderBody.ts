@@ -1,5 +1,5 @@
 import type { Rgb } from "./assets";
-import { OBJECT_RADIUS, OBJECT_SCALE, type SliderObject } from "./scene";
+import { OBJECT_RADIUS, type SliderObject } from "./scene";
 
 export interface SliderBodyImage {
   canvas: HTMLCanvasElement;
@@ -37,8 +37,8 @@ function colourAt(position: number, border: Rgb, accent: Rgb): Rgba {
  * Draws a slider body by stroking its path in ever narrower bands, each replacing what lies beneath it, so every
  * pixel ends up coloured by its distance from the centre line.
  */
-export function renderSliderBody(slider: SliderObject, pixelsPerUnit: number, border: Rgb, accent: Rgb): SliderBodyImage {
-  const radius = OBJECT_RADIUS * OBJECT_SCALE;
+export function renderSliderBody(slider: SliderObject, objectScale: number, pixelsPerUnit: number, border: Rgb, accent: Rgb): SliderBodyImage {
+  const radius = OBJECT_RADIUS * objectScale;
   const pad = radius + 2;
 
   const xs = slider.path.map((p) => p.x);

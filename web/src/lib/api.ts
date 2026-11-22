@@ -59,3 +59,24 @@ export const fetchDefaultIndex = () =>
   request<string[]>("/api/default/index")
     .then((names) => new Set(names))
     .catch(() => new Set<string>());
+
+/** An osu! standard difficulty from the game's library, which the preview can play. */
+export interface Beatmap {
+  id: string;
+  title: string;
+  artist: string;
+  difficulty: string;
+  stars: number;
+  /** In milliseconds. */
+  length: number;
+  /** Where the song's preview starts, in milliseconds, or -1 when the map doesn't say. */
+  previewTime: number;
+  file: string;
+  audio: string | null;
+  audioName: string | null;
+  background: string | null;
+  backgroundName: string | null;
+}
+
+/** Empty when the game has no beatmaps, or they can't be read. The preview has a pattern of its own for that. */
+export const fetchBeatmaps = () => request<Beatmap[]>("/api/beatmaps").catch(() => [] as Beatmap[]);

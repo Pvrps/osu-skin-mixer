@@ -1,34 +1,24 @@
-import { Application, Container, Rectangle, Sprite, Texture } from "pixi.js";
+import { Application, Assets, Container, Rectangle, Sprite, Texture } from "pixi.js";
 import type { Skin } from "../lib/skins";
 import { PreviewSkin, type Rgb, type Tex, rgbToHex } from "./assets";
 import { PreviewAudio } from "./audio";
 import {
-  CLICKS,
-  FADE_IN,
-  LOOP_LENGTH,
+  DEMO_SCENE,
   MISS_DELAY,
-  OBJECTS,
   OBJECT_RADIUS,
-  OBJECT_SCALE,
   PLAYFIELD,
-  PREEMPT,
   type Point,
-  SOUNDS,
+  type Scene,
   type SceneObject,
   type SliderObject,
   type SpinnerObject,
-  type TrailPart,
   ballAt,
-  cursorAt,
   endPosition,
   endTime,
-  hudAt,
   judgementTime,
   pathAt,
   spinRotation,
   startPosition,
-  trailByDistance,
-  trailByTime,
 } from "./scene";
 import { renderSliderBody } from "./sliderBody";
 
@@ -114,12 +104,23 @@ const inQuad = (t: number) => t * t;
 const fit = (tex: Tex, max: number) => Math.min(1, max / tex.width, max / tex.height);
 
 export interface PreviewSettings {
-  /** 0 (black) to 1 (bright) backdrop behind the playfield. */
+  /** How much of the background shows through, from 0 (black) to 1. */
   backdrop: number;
   playing: boolean;
   sound: boolean;
+  /** 0 to 1. */
+  volume: number;
   hud: boolean;
 }
+
+/** What goes with a scene: the song it is set to and the picture behind it. */
+export interface SceneMedia {
+  audioUrl: string | null;
+  backgroundUrl: string | null;
+}
+
+/** How long a slider's body is kept after it was last drawn. */
+const SLIDER_BODY_LIFETIME = 3000;
 
 export class PreviewRenderer {
   private readonly app = new Application();
@@ -132,11 +133,20 @@ export class PreviewRenderer {
   private skin: PreviewSkin | null = null;
   private fonts: Record<FontName, Font> | null = null;
   private comboColours: Rgb[] = [];
-  private trail: TrailPart[] = [];
   private trailConnected = false;
   private trailFade = 150;
+  private trailSpacing = 1;
 
-  private sliderBodies = new Map<number, Tex & { x: number; y: number }>();
+  private scene: Scene = DEMO_SCENE;
+  private readonly background = new Sprite();
+  private backgroundGeneration = 0;
+
+  /** Called a few times a second with the current time, for whatever shows playback progress. */
+  onProgress: ((time: number) => void) | null = null;
+  private lastProgress = 0;
+
+  private sliderBodies = new Map<number, Tex & { x: number; y: number; usedAt: number }>();
+  private lastSweep = 0;
   private readonly cropped = new Map<string, Texture>();
   private skinGeneration = 0;
 
@@ -144,7 +154,7 @@ export class PreviewRenderer {
   private height = 1;
   private time = 0;
   private displayedHealth = 1;
-  private settings: PreviewSettings = { backdrop: 0.12, playing: true, sound: false, hud: true };
+  private settings: PreviewSettings = { backdrop: 0.12, playing: true, sound: false, volume: 0.6, hud: true };
 
   private resizeObserver: ResizeObserver | null = null;
   private destroyed = false;
@@ -167,6 +177,9 @@ export class PreviewRenderer {
 
     this.ready = true;
     host.appendChild(this.app.canvas);
+    this.background.anchor.set(0.5);
+    this.background.visible = false;
+    this.app.stage.addChild(this.background);
     this.app.stage.addChild(this.stage);
 
     this.resize(host.clientWidth, host.clientHeight);
@@ -193,27 +206,73 @@ export class PreviewRenderer {
     this.settings = settings;
     this.applyBackdrop();
 
+    this.audio.setVolume(settings.volume);
+
     if (soundChanged) {
-      if (settings.sound) {
-        this.audio.enable();
-        void this.audio.loadPending();
-      } else {
-        this.audio.disable();
-      }
+      if (settings.sound) this.audio.enable();
+      else this.audio.disable();
     }
+
+    this.audio.syncMusic(settings.playing, this.time);
   }
 
-  /** Jumps to a point in the loop. */
+  /** Jumps to a point in the scene. */
   seek(time: number) {
-    this.time = ((time % LOOP_LENGTH) + LOOP_LENGTH) % LOOP_LENGTH;
-    this.displayedHealth = hudAt(this.time).health;
+    this.time = Math.max(this.scene.start, Math.min(this.scene.end - 1, time));
+    this.displayedHealth = this.scene.hudAt(this.time).health;
+    this.audio.seekMusic(this.time);
+    this.onProgress?.(this.time);
+  }
+
+  get currentTime() {
+    return this.time;
+  }
+
+  /** Switches to a different set of hit objects, starting from the given time. */
+  setScene(scene: Scene, media: SceneMedia, startAt: number) {
+    this.scene = scene;
+    this.clearGenerated();
+    this.configureTrail();
+
+    this.audio.setMusic(media.audioUrl);
+    this.seek(startAt);
+    this.audio.syncMusic(this.settings.playing, this.time);
+
+    const generation = ++this.backgroundGeneration;
+    this.background.visible = false;
+
+    if (media.backgroundUrl) {
+      void Assets.load<Texture>({ src: media.backgroundUrl, parser: "texture" })
+        .then((texture) => {
+          if (generation !== this.backgroundGeneration || this.destroyed) return;
+
+          this.background.texture = texture;
+          this.background.visible = true;
+          this.applyBackdrop();
+        })
+        .catch(() => {});
+    }
   }
 
   private applyBackdrop() {
     if (!this.ready) return;
 
-    const level = Math.round(clamp01(this.settings.backdrop) * 255);
-    this.app.renderer.background.color = (level << 16) | (level << 8) | level;
+    const level = clamp01(this.settings.backdrop);
+
+    if (this.background.visible) {
+      // The picture covers the whole preview, however either of them is shaped.
+      const texture = this.background.texture;
+      const scale = Math.max(this.width / texture.width, this.height / texture.height);
+
+      this.background.scale.set(scale);
+      this.background.position.set(this.width / 2, this.height / 2);
+      this.background.alpha = level;
+      this.app.renderer.background.color = 0x000000;
+      return;
+    }
+
+    const grey = Math.round(level * 0.6 * 255);
+    this.app.renderer.background.color = (grey << 16) | (grey << 8) | grey;
   }
 
   /** Switches the preview to a different skin once all of its textures have loaded. */
@@ -247,9 +306,10 @@ export class PreviewRenderer {
     }
 
     await Promise.all(loads);
-    await this.audio.setSkin(skin);
 
     if (generation !== this.skinGeneration || this.destroyed) return;
+
+    this.audio.setSkin(skin);
 
     const fonts = {} as Record<FontName, Font>;
 
@@ -270,31 +330,20 @@ export class PreviewRenderer {
     this.fonts = fonts;
     this.comboColours = skin.comboColours();
 
-    this.rebuildTrail();
+    this.configureTrail();
     this.clearGenerated();
   }
 
-  private rebuildTrail() {
+  private configureTrail() {
     const skin = this.skin;
     const texture = skin?.tex("cursortrail");
-
-    if (!skin || !texture) {
-      this.trail = [];
-      return;
-    }
+    if (!skin || !texture) return;
 
     // As in lazer, a skin with a cursormiddle gets a dense, additive, slowly fading trail; without one the trail
     // is a sparse series of parts dropped at a fixed rate.
     this.trailConnected = skin.has("cursor") ? skin.has("cursormiddle") : skin.tex("cursormiddle") !== null;
-
-    if (this.trailConnected) {
-      const widthInPlayfield = (texture.width * STABLE_HEIGHT) / UI_HEIGHT;
-      this.trail = trailByDistance(Math.max(0.5, widthInPlayfield / 2.5));
-      this.trailFade = 500;
-    } else {
-      this.trail = trailByTime(1000 / 60);
-      this.trailFade = 150;
-    }
+    this.trailFade = this.trailConnected ? 500 : 150;
+    this.trailSpacing = Math.max(0.5, (texture.width * STABLE_HEIGHT) / UI_HEIGHT / 2.5);
   }
 
   /** Drops textures generated for the current skin and size so they are rebuilt on demand. */
@@ -313,18 +362,20 @@ export class PreviewRenderer {
     this.height = height;
     this.app.renderer.resize(width, height);
     this.clearGenerated();
+    this.applyBackdrop();
   }
 
   // ---- coordinate helpers -------------------------------------------------------------------------------------
 
   /** Size of one playfield unit in CSS pixels. */
   private get unit() {
-    return this.height / STABLE_HEIGHT;
+    // The playfield area is 4:3 and always fits, whatever shape the preview is.
+    return Math.min(this.height / STABLE_HEIGHT, this.width / 640);
   }
 
   /** Size of one HUD unit in CSS pixels. */
   private get hudUnit() {
-    return this.height / UI_HEIGHT;
+    return (this.unit * STABLE_HEIGHT) / UI_HEIGHT;
   }
 
   private toScreen(p: Point): Point {
@@ -469,8 +520,33 @@ export class PreviewRenderer {
 
   private frame(deltaMs: number) {
     const previous = this.time;
+    const scene = this.scene;
 
-    if (this.settings.playing) this.time = (this.time + Math.min(deltaMs, 100)) % LOOP_LENGTH;
+    if (this.settings.playing) {
+      this.time += Math.min(deltaMs, 100);
+
+      // With the song playing, it keeps the time: ease towards it, or jump if the two have come apart.
+      const music = this.audio.musicTime();
+
+      if (music !== null) {
+        const drift = music - this.time;
+        this.time = Math.abs(drift) > 80 ? music : this.time + drift * 0.15;
+      }
+
+      if (this.time >= scene.end) {
+        this.time = scene.start;
+        this.audio.seekMusic(this.time);
+      }
+
+      this.audio.syncMusic(true, this.time);
+    }
+
+    const now = performance.now();
+
+    if (now - this.lastProgress > 200) {
+      this.lastProgress = now;
+      this.onProgress?.(this.time);
+    }
 
     this.used = 0;
 
@@ -480,19 +556,63 @@ export class PreviewRenderer {
     }
 
     for (let i = this.used; i < this.pool.length; i++) this.pool[i]!.visible = false;
+
+    if (now - this.lastSweep > 1000) {
+      this.lastSweep = now;
+
+      for (const [id, body] of this.sliderBodies) {
+        if (now - body.usedAt > SLIDER_BODY_LIFETIME) {
+          body.texture.destroy(true);
+          this.sliderBodies.delete(id);
+        }
+      }
+    }
   }
 
   private playSounds(from: number, to: number) {
-    if (!this.settings.sound || from === to) return;
+    // Anything but a small step forwards is a seek or a restart, with nothing in between to be heard.
+    if (!this.settings.sound || to <= from || to - from > 250) return;
 
-    for (const event of SOUNDS) {
-      const crossed = from < to ? event.time > from && event.time <= to : event.time > from || event.time <= to;
-      if (crossed) this.audio.play(event.sound);
+    for (const event of this.scene.sounds) {
+      if (event.time > to) break;
+      if (event.time > from) this.audio.play(event.samples);
     }
+  }
+
+  /** The objects which could be on screen at a time, in order. Everything else is skipped without a look. */
+  private visibleObjects(time: number): SceneObject[] {
+    const objects = this.scene.objects;
+    const linger = JUDGEMENT_FADE_OUT_DELAY + JUDGEMENT_FADE_OUT + MISS_DELAY;
+
+    // Objects are in order of their start, so the last one which has appeared can be found by halving.
+    let low = 0;
+    let high = objects.length;
+
+    while (low < high) {
+      const middle = (low + high) >> 1;
+
+      if (objects[middle]!.time - this.scene.preempt <= time) low = middle + 1;
+      else high = middle;
+    }
+
+    const visible: SceneObject[] = [];
+
+    // Walking back from there, anything which ended long ago is done with. Long objects are few, so a generous
+    // look behind is enough to catch one that started early and is still going.
+    for (let i = low - 1; i >= 0 && visible.length < 400; i--) {
+      const object = objects[i]!;
+
+      if (endTime(object) + linger >= time) visible.push(object);
+      else if (time - object.time > 120000) break;
+    }
+
+    return visible.reverse();
   }
 
   private drawScene(time: number) {
     this.drawFollowPoints(time);
+
+    const OBJECTS = this.visibleObjects(time);
 
     // Earlier objects sit on top of later ones.
     for (let i = OBJECTS.length - 1; i >= 0; i--) {
@@ -500,7 +620,7 @@ export class PreviewRenderer {
 
       if (object.kind === "circle") {
         this.drawCirclePiece(time, object.position, {
-          appear: object.time - PREEMPT,
+          appear: object.time - this.scene.preempt,
           hitAt: object.result === "miss" ? null : object.time,
           missAt: object.result === "miss" ? object.time + MISS_DELAY : null,
           combo: object.combo,
@@ -538,6 +658,7 @@ export class PreviewRenderer {
     position: Point,
     piece: { appear: number; hitAt: number | null; missAt: number | null; combo: number; number: number | null; lookup: string },
   ) {
+    const { fadeIn: FADE_IN, objectScale: OBJECT_SCALE } = this.scene;
     const skin = this.skin!;
 
     if (time < piece.appear) return;
@@ -603,6 +724,7 @@ export class PreviewRenderer {
   }
 
   private drawApproachCircle(time: number, object: SceneObject) {
+    const { preempt: PREEMPT, fadeIn: FADE_IN, objectScale: OBJECT_SCALE } = this.scene;
     const texture = this.skin!.tex("approachcircle");
     const appear = object.time - PREEMPT;
 
@@ -629,17 +751,17 @@ export class PreviewRenderer {
 
   // ---- sliders ------------------------------------------------------------------------------------------------
 
-  private sliderBody(slider: SliderObject): Tex & { x: number; y: number } {
+  private sliderBody(slider: SliderObject): Tex & { x: number; y: number; usedAt: number } {
     let body = this.sliderBodies.get(slider.id);
 
     if (!body) {
       const skin = this.skin!;
       const resolution = this.app.renderer.resolution;
       const accent = skin.colour("SliderTrackOverride") ?? this.comboColours[slider.combo % this.comboColours.length] ?? [255, 255, 255];
-      const image = renderSliderBody(slider, this.unit * resolution, skin.colour("SliderBorder") ?? [255, 255, 255], accent);
+      const image = renderSliderBody(slider, this.scene.objectScale, this.unit * resolution, skin.colour("SliderBorder") ?? [255, 255, 255], accent);
       const texture = Texture.from(image.canvas);
 
-      body = { texture, width: image.canvas.width / resolution, height: image.canvas.height / resolution, ratio: 1 / resolution, fromDefault: false, x: image.x, y: image.y };
+      body = { texture, width: image.canvas.width / resolution, height: image.canvas.height / resolution, ratio: 1 / resolution, fromDefault: false, x: image.x, y: image.y, usedAt: 0 };
       this.sliderBodies.set(slider.id, body);
     }
 
@@ -647,6 +769,7 @@ export class PreviewRenderer {
   }
 
   private drawSlider(time: number, slider: SliderObject) {
+    const { preempt: PREEMPT, fadeIn: FADE_IN, objectScale: OBJECT_SCALE } = this.scene;
     const skin = this.skin!;
     const appear = slider.time - PREEMPT;
     const end = endTime(slider);
@@ -658,6 +781,7 @@ export class PreviewRenderer {
     const base = OBJECT_SCALE * this.unit;
 
     const body = this.sliderBody(slider);
+    body.usedAt = performance.now();
     const bodyOrigin = this.toScreen(body);
     this.draw(body, bodyOrigin.x, bodyOrigin.y, { anchorX: 0, anchorY: 0, alpha: fadeIn * fadeOut });
 
@@ -703,6 +827,7 @@ export class PreviewRenderer {
   }
 
   private drawReverseArrow(time: number, slider: SliderObject, appear: number, hitAt: number) {
+    const { objectScale: OBJECT_SCALE } = this.scene;
     const skin = this.skin!;
     const arrow = skin.tex("reversearrow");
     if (!arrow) return;
@@ -738,6 +863,7 @@ export class PreviewRenderer {
   }
 
   private drawSliderBall(time: number, slider: SliderObject, end: number) {
+    const { objectScale: OBJECT_SCALE } = this.scene;
     const skin = this.skin!;
     const base = OBJECT_SCALE * this.unit;
     const maxSize = OBJECT_RADIUS * 6;
@@ -791,15 +917,20 @@ export class PreviewRenderer {
   // ---- follow points ------------------------------------------------------------------------------------------
 
   private drawFollowPoints(time: number) {
+    const { preempt: PREEMPT, fadeIn: FADE_IN, objectScale: OBJECT_SCALE } = this.scene;
     const frames = this.skin!.frames("followpoint");
     if (frames.length === 0) return;
 
     const spacing = 32;
     const preempt = 800 * Math.min(1, PREEMPT / 450);
+    const OBJECTS = this.scene.objects;
 
     for (let i = 1; i < OBJECTS.length; i++) {
       const from = OBJECTS[i - 1]!;
       const to = OBJECTS[i]!;
+
+      if (endTime(from) - preempt > time) continue;
+      if (to.time + FADE_IN < time) continue;
 
       // Follow points only join objects within the same combo, and never involve spinners.
       if (from.combo !== to.combo || from.kind === "spinner" || to.kind === "spinner") continue;
@@ -835,6 +966,7 @@ export class PreviewRenderer {
   // ---- judgements ---------------------------------------------------------------------------------------------
 
   private drawJudgement(time: number, object: SceneObject) {
+    const { objectScale: OBJECT_SCALE } = this.scene;
     const skin = this.skin!;
     const at = judgementTime(object);
     const elapsed = time - at;
@@ -903,6 +1035,7 @@ export class PreviewRenderer {
   // ---- spinner ------------------------------------------------------------------------------------------------
 
   private drawSpinner(time: number, spinner: SpinnerObject) {
+    const { fadeIn: FADE_IN } = this.scene;
     const skin = this.skin!;
     const end = spinner.time + spinner.duration;
 
@@ -918,7 +1051,9 @@ export class PreviewRenderer {
     const sprite = 0.625 * u;
     const left = this.width / 2 - 320 * u;
     const centreX = this.width / 2;
-    const top = 29;
+    // The layout is 480 units tall, centred in whatever height there is.
+    const top = 29 + (this.height / u - STABLE_HEIGHT) / 2;
+    const bottom = top - 29;
     const centreY = (top + 219) * u;
 
     const hasBackground = skin.has("spinner-background");
@@ -964,8 +1099,8 @@ export class PreviewRenderer {
     }
 
     const slideIn = 50 * (1 - outQuad(clamp01((time - (spinner.time - FADE_IN)) / FADE_IN)));
-    this.draw(skin.tex("spinner-rpm"), centreX - 87 * u, (445 + slideIn) * u, { scale: sprite, alpha, anchorX: 0, anchorY: 0 });
-    this.drawText("score", "477", centreX + 80 * u, (448 + slideIn) * u, { scale: sprite * 0.9, anchorX: 1, anchorY: 0, alpha });
+    this.draw(skin.tex("spinner-rpm"), centreX - 87 * u, (bottom + 445 + slideIn) * u, { scale: sprite, alpha, anchorX: 0, anchorY: 0 });
+    this.drawText("score", "477", centreX + 80 * u, (bottom + 448 + slideIn) * u, { scale: sprite * 0.9, anchorX: 1, anchorY: 0, alpha });
 
     const complete = spinner.time + spinner.duration * 0.7;
 
@@ -986,7 +1121,7 @@ export class PreviewRenderer {
   private drawHud(time: number) {
     const skin = this.skin!;
     const h = this.hudUnit;
-    const hud = hudAt(time);
+    const hud = this.scene.hudAt(time);
 
     // Health.
     this.displayedHealth = lerp(this.displayedHealth, hud.health, 0.12);
@@ -1066,12 +1201,13 @@ export class PreviewRenderer {
 
     const trail = skin.tex("cursortrail");
 
-    if (trail && this.trail.length > 0) {
+    if (trail) {
       const rotates = skin.bool("CursorTrailRotate", true) && skin.bool("CursorRotate", true);
+      const parts = this.trailConnected ? this.scene.trailByDistance(time, this.trailFade, this.trailSpacing) : this.scene.trailByTime(time, this.trailFade, 1000 / 60);
 
-      for (const part of this.trail) {
-        const age = (((time - part.time) % LOOP_LENGTH) + LOOP_LENGTH) % LOOP_LENGTH;
-        if (age >= this.trailFade) continue;
+      for (const part of parts) {
+        const age = time - part.time;
+        if (age < 0 || age >= this.trailFade) continue;
 
         const { x, y } = this.toScreen(part);
 
@@ -1086,12 +1222,13 @@ export class PreviewRenderer {
       }
     }
 
-    const { x, y } = this.toScreen(cursorAt(time));
+    const { x, y } = this.toScreen(this.scene.cursorAt(time));
 
     let expand = 1;
 
     if (skin.bool("CursorExpand", true)) {
-      for (const click of CLICKS) {
+      for (const click of this.scene.clicks) {
+        if (click.down > time) break;
         if (time >= click.down && time < click.up) expand = lerp(1, 1.2, outQuad(clamp01((time - click.down) / 100)));
         else if (time >= click.up && time < click.up + 100) expand = lerp(1.2, 1, outQuad((time - click.up) / 100));
       }

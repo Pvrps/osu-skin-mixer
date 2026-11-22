@@ -16,6 +16,12 @@ public record ApplyRequest(string Name, string? SkinId, List<SkinFileDto> Files,
 
 public record ApplyResult(string Id, bool Created, int FileCount, string? Backup);
 
+/// <summary>An osu! standard difficulty which the preview can play.</summary>
+/// <param name="File">The hash of the .osu file.</param>
+/// <param name="Audio">The hash of the song, if the set has it.</param>
+/// <param name="Background">The hash of the background image, if the set has it.</param>
+public record BeatmapDto(string Id, string Title, string Artist, string Difficulty, double Stars, double Length, int PreviewTime, string File, string? Audio, string? AudioName, string? Background, string? BackgroundName);
+
 public class UserFacingException(string message) : Exception(message);
 
 /// <summary>
@@ -114,6 +120,67 @@ public partial class OsuStore(string osuDir, string stateDir)
         }
 
         return result.OrderBy(s => s.Name, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    /// <summary>
+    /// Every osu! standard difficulty in the game whose files are present.
+    /// </summary>
+    public List<BeatmapDto> GetBeatmaps()
+    {
+        using var realm = open(readOnly: true);
+
+        var result = new List<BeatmapDto>();
+
+        foreach (var set in realm.DynamicApi.All("BeatmapSet"))
+        {
+            if (set.DynamicApi.Get<bool>("DeletePending"))
+                continue;
+
+            var files = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var usage in set.DynamicApi.GetList<IRealmObjectBase>("Files"))
+            {
+                var file = usage.DynamicApi.Get<IRealmObjectBase?>("File");
+                string? filename = usage.DynamicApi.Get<string?>("Filename");
+
+                if (file != null && filename != null)
+                    files[filename.Replace('\\', '/')] = file.DynamicApi.Get<string>("Hash");
+            }
+
+            foreach (var beatmap in set.DynamicApi.GetList<IRealmObjectBase>("Beatmaps"))
+            {
+                var d = beatmap.DynamicApi;
+
+                if (d.Get<bool>("Hidden") || d.Get<IRealmObjectBase?>("Ruleset")?.DynamicApi.Get<string?>("ShortName") != "osu")
+                    continue;
+
+                string hash = d.Get<string?>("Hash") ?? string.Empty;
+                var metadata = d.Get<IRealmObjectBase?>("Metadata");
+
+                if (metadata == null || !IsValidHash(hash) || !File.Exists(GetStoragePath(hash)))
+                    continue;
+
+                var m = metadata.DynamicApi;
+                string audioName = (m.Get<string?>("AudioFile") ?? string.Empty).Replace('\\', '/');
+                string backgroundName = (m.Get<string?>("BackgroundFile") ?? string.Empty).Replace('\\', '/');
+
+                result.Add(new BeatmapDto(
+                    d.Get<Guid>("ID").ToString(),
+                    m.Get<string?>("Title") ?? string.Empty,
+                    m.Get<string?>("Artist") ?? string.Empty,
+                    d.Get<string?>("DifficultyName") ?? string.Empty,
+                    d.Get<double>("StarRating"),
+                    d.Get<double>("Length"),
+                    m.Get<int>("PreviewTime"),
+                    hash,
+                    files.GetValueOrDefault(audioName),
+                    files.ContainsKey(audioName) ? Path.GetFileName(audioName) : null,
+                    files.GetValueOrDefault(backgroundName),
+                    files.ContainsKey(backgroundName) ? Path.GetFileName(backgroundName) : null));
+            }
+        }
+
+        return result.OrderBy(b => b.Artist, StringComparer.OrdinalIgnoreCase).ThenBy(b => b.Title, StringComparer.OrdinalIgnoreCase).ThenBy(b => b.Stars).ToList();
     }
 
     private string? readText(string hash)
