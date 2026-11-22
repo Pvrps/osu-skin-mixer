@@ -5,9 +5,13 @@ using Microsoft.Extensions.FileProviders;
 using OsuSkinMixer;
 using OsuSkinMixer.Platforms;
 
-// Started plainly, the mixer is an app: it shows its own window and goes away when that is closed.
-// "--no-open" leaves it running as a plain local server instead, and "--browser" uses a tab in the default browser.
-bool open = !args.Contains("--no-open");
+// This is the half of the mixer which reads and writes osu!'s database. The app's window (the app folder) starts
+// it with "--attached" and shows the page it serves.
+//
+// It can also be run by itself, when it opens the page in a browser: in a bare window where one is installed
+// which can do that, or in a tab with "--browser". "--no-open" opens nothing, for development.
+bool attached = args.Contains("--attached");
+bool open = !attached && !args.Contains("--no-open");
 bool preferWindow = !args.Contains("--browser");
 
 var platform = Platform.Current;
@@ -258,6 +262,23 @@ if (open)
     {
         Launcher.Open(platform, url, preferWindow, browserProfile);
         sessions.WatchStartup();
+    });
+}
+
+if (attached)
+{
+    // The window holds this program's input open for as long as it lives. Once that closes, however the window
+    // went away, there is nobody left to serve.
+    _ = Task.Run(async () =>
+    {
+        using var input = Console.OpenStandardInput();
+        byte[] buffer = new byte[256];
+
+        while (await input.ReadAsync(buffer) > 0)
+        {
+        }
+
+        app.Lifetime.StopApplication();
     });
 }
 

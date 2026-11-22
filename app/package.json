@@ -1,0 +1,42 @@
+{
+  "name": "osu-skin-mixer",
+  "productName": "osu-skin-mixer",
+  "version": "0.1.0",
+  "description": "Build an osu!lazer skin out of parts of the skins you already have",
+  "author": "osu-skin-mixer contributors",
+  "private": true,
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "package": "electron-builder"
+  },
+  "devDependencies": {
+    "electron": "^45.3.4",
+    "electron-builder": "^26.18.0"
+  },
+  "build": {
+    "appId": "dev.osuskinmixer.desktop",
+    "productName": "osu-skin-mixer",
+    "artifactName": "osu-skin-mixer-${version}-${os}-${arch}.${ext}",
+    "directories": {
+      "output": "out",
+      "buildResources": "icons"
+    },
+    "files": ["src/**/*", "package.json"],
+    "extraResources": [{ "from": "server", "to": "server" }],
+    "linux": {
+      "target": ["AppImage"],
+      "category": "Game",
+      "icon": "icons/icon.png"
+    },
+    "win": {
+      "target": ["portable"],
+      "icon": "icons/icon.ico"
+    },
+    "mac": {
+      "target": ["dmg"],
+      "category": "public.app-category.games",
+      "icon": "icons/icon.icns"
+    }
+  }
+}

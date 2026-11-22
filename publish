@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
-# Builds the standalone app for each platform into dist/: a single file with the runtime and the UI inside.
+# Builds the app for the system this is run on into dist/.
 #
-#   ./publish                 builds for Linux and Windows
-#   ./publish linux-x64       builds for just the platforms named
+# Each system's build has to be made on that system: an AppImage on Linux, a portable .exe on Windows and a .dmg
+# on macOS. The release workflow does that for all three.
+#
+# On NixOS the result is the app as a folder with a launcher, run by the Electron from nixpkgs. It runs here and
+# nowhere else, which makes it good for trying a build out and nothing more.
 set -euo pipefail
 
 cd "$(dirname "$(readlink -f "$0")")"
@@ -12,12 +15,42 @@ if [[ -z "${OSU_SKIN_MIXER_IN_SHELL:-}" ]] && ! { command -v dotnet && command -
   exec nix develop -c "$0" "$@"
 fi
 
-targets=("$@")
-[[ ${#targets[@]} -eq 0 ]] && targets=(linux-x64 win-x64)
+runtime="$(dotnet --info | sed -n 's/^ *RID: *//p' | head -n 1)"
 
+# The interface goes into the server, and the server goes alongside the window.
 (cd web && npm ci --no-fund --no-audit && npm run build)
 
-for target in "${targets[@]}"; do
-  dotnet publish server -c Release -r "$target" -o "dist/$target" --nologo -v quiet
-  echo "built dist/$target"
-done
+rm -rf app/server
+dotnet publish server -c Release -r "$runtime" -o app/server --nologo -v quiet
+
+cd app
+npm ci --no-fund --no-audit
+rm -rf out
+
+if [[ -n "${MIXER_ELECTRON_DIST:-}" ]]; then
+  npx electron-builder --dir -c.electronDist="$MIXER_ELECTRON_DIST" -c.electronVersion="$MIXER_ELECTRON_VERSION"
+else
+  npx electron-builder
+fi
+
+cd ..
+rm -rf "dist/$runtime"
+mkdir -p "dist/$runtime"
+
+if [[ -n "${MIXER_ELECTRON_DIST:-}" ]]; then
+  # The folder a package would have been made from, and a launcher which starts it with the Electron from
+  # nixpkgs. Electron as copied into the folder can't start by itself here.
+  cp -r app/out/*-unpacked "dist/$runtime/app"
+
+  cat > "dist/$runtime/osu-skin-mixer" <<LAUNCHER
+#!/usr/bin/env bash
+here="\$(dirname "\$(readlink -f "\$0")")"
+export MIXER_SERVER="\$here/app/resources/server/osu-skin-mixer-server"
+exec "$(command -v electron)" "\$here/app/resources/app.asar" "\$@"
+LAUNCHER
+  chmod +x "dist/$runtime/osu-skin-mixer"
+else
+  find app/out -maxdepth 1 -type f \( -name '*.AppImage' -o -name '*.exe' -o -name '*.dmg' \) -exec cp {} "dist/$runtime/" \;
+fi
+
+echo "built dist/$runtime"

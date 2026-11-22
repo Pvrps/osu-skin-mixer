@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# For development: builds the web UI if needed and serves the mixer on http://127.0.0.1:${PORT:-5727},
-# without opening a window. See ./publish for building the standalone app.
+# For development.
+#
+#   ./run        serves the mixer at http://127.0.0.1:${PORT:-5727}, to be opened in a browser
+#   ./run app    builds and opens the app itself, in its own window
 set -euo pipefail
 
 cd "$(dirname "$(readlink -f "$0")")"
 
-# The toolchain (dotnet, node, and the native libraries Realm needs) comes from the flake's dev shell.
+# The toolchain (dotnet, node and electron) comes from the flake's dev shell.
 if [[ -z "${OSU_SKIN_MIXER_IN_SHELL:-}" ]] && ! { command -v dotnet && command -v npm; } >/dev/null 2>&1; then
   export OSU_SKIN_MIXER_IN_SHELL=1
   exec nix develop -c "$0" "$@"
@@ -20,5 +22,29 @@ if [[ ! -f web/dist/index.html ]] || [[ -n "$(find web/src web/index.html web/pa
   (cd web && npm run build)
 fi
 
+# The server is given this build of the interface, rather than whichever one was last packed into it.
 export WEB_ROOT="$PWD/web/dist"
+
+if [[ "${1:-}" == "app" ]]; then
+  shift
+
+  # The window starts the server itself, so it is told where this build of it is. The server is built to carry
+  # its own .NET runtime, as it does when released: started by the window, it has no way to find the SDK's.
+  runtime="$(dotnet --info | sed -n 's/^ *RID: *//p' | head -n 1)"
+  dotnet publish server -c Release -r "$runtime" -o app/server-dev --nologo -v quiet
+  export MIXER_SERVER="$PWD/app/server-dev/osu-skin-mixer-server"
+
+  if [[ ! -d app/node_modules ]]; then
+    (cd app && npm ci --no-fund --no-audit)
+  fi
+
+  # A system's own Electron is used where there is one, as on NixOS, where the one npm fetches can't run.
+  if command -v electron >/dev/null 2>&1; then
+    exec electron app "$@"
+  fi
+
+  cd app
+  exec npx electron . "$@"
+fi
+
 exec dotnet run --project server -c Release --no-launch-profile -- --no-open "$@"
