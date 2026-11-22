@@ -1,5 +1,5 @@
 # Builds the standalone app for Linux and Windows and attaches both to a GitHub release
-# whenever a tag like v0.2.0 is pushed.
+# whenever the repository's owner pushes a tag like v0.2.0. A tag pushed by anyone else is ignored.
 name: Release
 
 on:
@@ -11,6 +11,7 @@ permissions:
 
 jobs:
   release:
+    if: github.actor == github.repository_owner
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
