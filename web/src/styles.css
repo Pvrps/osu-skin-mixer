@@ -1656,3 +1656,42 @@ input[type="range"]:disabled {
   height: 12px;
   border-radius: 3px;
 }
+
+.editor-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.editor-tabs {
+  flex: none;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  gap: 2px;
+  padding: 6px 6px 0;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
+.editor-tabs button {
+  flex: 1;
+  padding: 6px 4px 7px;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: var(--radius-small) var(--radius-small) 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.editor-tabs button:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.editor-tabs button.on {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}

@@ -47,12 +47,20 @@ type Shape = "line" | "rectangle" | "ellipse";
 const TOOLS: { id: Tool; label: string; key: string; hint: string; icon: React.ReactNode }[] = [
   { id: "brush", label: "Brush", key: "B", hint: "Drag to paint.", icon: <path d="M11.5 1.5l3 3-7.5 7.5-3.5.5.5-3.5zM3 13.5c-.8.8-2 .8-2 .8s0-1.200.800-2" /> },
   { id: "eraser", label: "Eraser", key: "E", hint: "Drag to rub out.", icon: <path d="M9.500 2.500l4 4-6.500 6.500h-3l-2-2zM5.500 6.500l4 4M6 14.500h8" /> },
-  { id: "fill", label: "Fill", key: "G", hint: "Click an area to fill it.", icon: <path d="M7 1.500l6 6-5 5a1.400 1.400 0 01-2 0l-4-4a1.400 1.400 0 010-2zM2.500 7.500h9.500M14 10.500s1.200 1.600 1.200 2.500a1.200 1.200 0 01-2.400 0c0-.900 1.200-2.500 1.200-2.500z" /> },
-  { id: "replace", label: "Replace colour", key: "R", hint: "Click a colour to change every pixel of it to yours, keeping its shading.", icon: <path d="M2 5.500a3 3 0 106 0 3 3 0 10-6 0M9 11a2.500 2.500 0 105 0 2.500 2.500 0 10-5 0M10.500 3h3.500v3.500M14 3l-4.500 4.500" /> },
+  { id: "fill", label: "Fill", key: "G", hint: "Click an area to paint it over in one flat colour. Works on empty areas too.", icon: <path d="M7 1.500l6 6-5 5a1.400 1.400 0 01-2 0l-4-4a1.400 1.400 0 010-2zM2.500 7.500h9.500M14 10.500s1.200 1.600 1.200 2.500a1.200 1.200 0 01-2.400 0c0-.900 1.200-2.500 1.200-2.500z" /> },
+  { id: "replace", label: "Replace colour", key: "R", hint: "Click a colour to turn it into yours wherever it appears, keeping its shading and soft edges.", icon: <path d="M2 5.500a3 3 0 106 0 3 3 0 10-6 0M9 11a2.500 2.500 0 105 0 2.500 2.500 0 10-5 0M10.500 3h3.500v3.500M14 3l-4.500 4.500" /> },
   { id: "picker", label: "Pick colour", key: "I", hint: "Click to take a colour from the image. Alt-click does this with any tool.", icon: <path d="M10.500 2a2 2 0 013 3l-1.500 1.500.800.800-1 1-.800-.800-5.500 5.500-2.500.500.500-2.500 5.500-5.500-.800-.800 1-1 .800.800z" /> },
   { id: "select", label: "Select", key: "M", hint: "Drag to mark out an area. Other tools then only work inside it.", icon: <path d="M2 2h3M7 2h2M11 2h3v3M14 7v2M14 11v3h-3M9 14H7M5 14H2v-3M2 9V7M2 5V2" /> },
   { id: "shape", label: "Shape", key: "U", hint: "Drag to draw. Hold Shift for a square, a circle or a straight angle.", icon: <path d="M2 6.500h7.500v7.500H2zM6.500 5.500a4 4 0 117.500 2" /> },
   { id: "hand", label: "Move view", key: "H", hint: "Drag to move around. Holding Space does this with any tool.", icon: <path d="M5 8V3.500a1 1 0 012 0V7M7 7V2.500a1 1 0 012 0V7M9 7V3.500a1 1 0 012 0V8M11 8V5.500a1 1 0 012 0V10a4.500 4.500 0 01-4.500 4.500A4.500 4.500 0 014.500 12L2.500 9a1 1 0 011.600-1.200L5 9" /> },
+];
+
+type Tab = "tool" | "adjust" | "image";
+
+const TABS: { id: Tab; label: string; hint: string }[] = [
+  { id: "tool", label: "Tool", hint: "Settings for the tool in use" },
+  { id: "adjust", label: "Adjust", hint: "Hue, saturation, brightness and opacity" },
+  { id: "image", label: "Image", hint: "Flip, rotate, trim and resize" },
 ];
 
 /** How much history is kept, by the memory it takes up. Skin images are small, so this is a great many steps. */
@@ -127,7 +135,14 @@ export function ImageEditor({ title, files, onSave, onRevert, onClose }: Props) 
   >(null);
 
   const [fileIndex, setFileIndex] = useState(() => Math.max(0, files.findIndex((f) => f.hd)));
-  const [tool, setTool] = useState<Tool>("brush");
+  const [tool, setToolOnly] = useState<Tool>("brush");
+  const [tab, setTab] = useState<Tab>("tool");
+
+  /** Picking a tool brings up its settings, whichever tab was showing. */
+  const setTool = useCallback((next: Tool) => {
+    setToolOnly(next);
+    setTab("tool");
+  }, []);
   const [colour, setColour] = useState("#ff66ab");
   const [opacity, setOpacity] = useState(100);
   const [size, setSize] = useState(8);
@@ -997,6 +1012,15 @@ export function ImageEditor({ title, files, onSave, onRevert, onClose }: Props) 
           </div>
 
           <div className="editor-panel">
+            <div className="editor-tabs" role="tablist" aria-label="What to change">
+              {TABS.map((t) => (
+                <button key={t.id} role="tab" aria-selected={tab === t.id} className={tab === t.id ? "on" : ""} title={t.hint} onClick={() => setTab(t.id)}>
+                  {t.label}
+                </button>
+              ))}
+            </div>
+
+            {tab === "tool" && (
             <section>
               <h3>{activeTool.label}</h3>
               <p className="muted">{activeTool.hint}</p>
@@ -1062,7 +1086,9 @@ export function ImageEditor({ title, files, onSave, onRevert, onClose }: Props) 
                 </>
               )}
             </section>
+            )}
 
+            {tab === "tool" && (tool === "select" || selection) && (
             <section>
               <h3>Selection</h3>
               {selection ? (
@@ -1090,7 +1116,9 @@ export function ImageEditor({ title, files, onSave, onRevert, onClose }: Props) 
                 </div>
               )}
             </section>
+            )}
 
+            {tab === "adjust" && (
             <section>
               <h3>Adjust {scope}</h3>
               {slider("Hue", adjustment.hue, -180, 180, (hue) => tryAdjustment({ ...adjustment, hue }), "°")}
@@ -1115,7 +1143,9 @@ export function ImageEditor({ title, files, onSave, onRevert, onClose }: Props) 
                 </button>
               </div>
             </section>
+            )}
 
+            {tab === "image" && (
             <section>
               <h3>Image</h3>
               <div className="editor-buttons">
@@ -1154,6 +1184,7 @@ export function ImageEditor({ title, files, onSave, onRevert, onClose }: Props) 
                 </button>
               </form>
             </section>
+            )}
           </div>
         </div>
 
