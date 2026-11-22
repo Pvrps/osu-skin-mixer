@@ -1,89 +1,88 @@
 # osu! skin mixer
 
-Build a skin for [osu!lazer](https://github.com/ppy/osu) out of parts of the skins you already have, and see it in
-play before it goes anywhere near the game.
+Make a new osu!lazer skin by picking parts from skins you already have.
 
-- Start from one of your skins, then swap in any single element (an image, a sound, a font glyph) from any other.
-- Hide or silence an element, fall back to the game's own, or recolour an image.
-- Watch the result on a beatmap from your own library, with its song and hit sounds.
-- Set any `skin.ini` value yourself.
-- Press **Apply** and the mix appears in osu! as a skin of its own. The skins it draws on are never changed.
+Take the cursor from one skin, the hit circles from another and the hit sounds from a third, and watch the
+result play on one of your own beatmaps before you save it. Your existing skins are never changed.
 
-Only osu! standard is previewed, and only legacy-style skins (the kind made of image and sound files) can be
-mixed.
+It works with osu!lazer, the osu! (standard) game mode, and skins made of image and sound files.
 
-## Using it
+## How to use it
 
-Download the build for your platform from the releases page and run it. It is a single file with nothing to
-install. It opens in a window of its own if you have Edge, Chrome, Chromium or Brave, and otherwise in a tab of
-your default browser. Closing that window quits the mixer.
+1. Download the file for your system from the Releases page and run it. There is nothing to install.
+   - It opens in its own window if you have Edge, Chrome, Chromium or Brave. Otherwise it opens in your
+     browser.
+   - Closing the window quits it.
+2. Type a name for your skin and choose a skin to start from.
+3. Change what you like:
+   - **One element:** click it in the list on the left, then click the version you want on the right.
+     Hovering over a version shows it in the preview first.
+   - **A whole group** (Cursor, Hit sounds, ...): click the group's name, then click a skin.
+   - **Hide or silence** an element: choose "Hidden" or "Silent".
+   - **Recolour** an image: click "Recolour this image" and pick a colour.
+   - **skin.ini:** the `skin.ini` button at the top lets you set any value yourself.
+4. Click **Create skin**. Your skin now shows up in osu!'s skin list.
+5. After more changes, click **Apply**. In osu!, switch to another skin and back to see them.
 
-1. Name your mix and pick the skin it starts as a copy of.
-2. Pick an element on the left. On the right are all the versions of it your skins have, with identical ones
-   folded together. Hover one to try it in the preview, click to take it.
-3. Click a group's name (Cursor, Hit sounds, ...) to take all of it from one skin, or to change its settings.
-   **Jump to** under the preview skips to the next slider, spinner, miss and so on in the song.
-4. Press **Create skin**, then choose the new skin in osu!. After later changes press **Apply**, and in osu!
-   switch to another skin and back: the game doesn't reload a skin while it is selected.
+### The preview
 
-Before the first change of each session the mixer saves a copy of osu!'s database, keeping the newest three.
+- Click the song name under the preview to choose a beatmap from your library.
+- **Jump to** skips to the next slider, spinner, miss and so on.
+- A few 100s, 50s and misses are added on purpose so you can see every hit burst.
 
-### Where things are
+### If it can't find osu!
+
+It asks you for the folder. In osu!, open Settings and click "Open osu! folder", then paste that folder's
+address. On Linux you can also just start osu! and click "Look again".
+
+### Backups
+
+Before the first change each time you run it, the mixer saves a copy of osu!'s database. It keeps the last
+three in its own folder (see below).
+
+## Options
+
+You don't need any of these for normal use.
+
+| Option | What it does |
+| --- | --- |
+| `--no-open` | Doesn't open a window. Keeps running until you stop it. |
+| `--browser` | Opens in your browser instead of its own window. |
+| `OSU_DIR` | Environment variable. The folder osu! keeps its data in. |
+| `MIXER_STATE_DIR` | Environment variable. The folder the mixer keeps its own data in. |
+| `PORT` | Environment variable. The port to use. The default is 5727. |
+
+Where things are kept:
 
 | | Linux | Windows |
 | --- | --- | --- |
-| osu! data it looks for | `~/.local/share/osu` | `%APPDATA%\osu` |
-| The mixer's own data | `~/.local/share/osu-skin-mixer` | `%LOCALAPPDATA%\osu-skin-mixer` |
-
-A data folder moved from within osu! is followed automatically. On Linux the mixer also finds a Flatpak
-install, the Windows build inside a Wine, Lutris, Bottles or Proton prefix, and whatever folder a running osu!
-is using. If none of that turns it up, the mixer asks for the folder and remembers the answer. The mixer's own data holds your current mix,
-recoloured images, a cache of the game's built-in skin (downloaded the first time it is needed), and the
-database backups.
-
-### Options
-
-| | |
-| --- | --- |
-| `--no-open` | Don't open a window, and keep running until stopped. |
-| `--browser` | Open in a tab of the default browser instead of a window of its own. |
-| `OSU_DIR` | Where osu!'s data is, if not in the usual place. |
-| `MIXER_STATE_DIR` | Where the mixer keeps its own data. |
-| `PORT` | The port to serve on. Defaults to 5727, or any free one if that is taken. |
-
-## How it works
-
-osu!lazer keeps every file of every skin once, named by its hash, and a database saying which skin uses which
-file under which name. A mix is therefore mostly bookkeeping: the mixer writes a skin entry which points at
-files the game already has. The only new files are the generated `skin.ini`, recoloured images, and the blank
-image and silent sample which stand in for hidden elements.
-
-- `server/` is a small local web server (ASP.NET, .NET 10) which reads and writes osu!'s Realm database. It opens
-  the database only for the length of each request, in a mode which can never change its schema.
-- `web/` is the interface (React, TypeScript, PixiJS). All of the skin logic lives here, in `web/src/lib`, so
-  that what the preview shows and what gets written are computed by the same code. `web/src/preview` is a
-  reimplementation of how lazer draws a legacy skin, and reads `.osu` files to play them.
-
-The Realm package must be the version osu!lazer itself ships with, or the database can't be opened.
+| osu!'s data | `~/.local/share/osu` | `%APPDATA%\osu` |
+| The mixer's data | `~/.local/share/osu-skin-mixer` | `%LOCALAPPDATA%\osu-skin-mixer` |
 
 ## Development
 
-Needs the .NET 10 SDK and Node 22. With Nix, `nix develop` provides both, and the scripts enter it by themselves.
+You need the .NET 10 SDK and Node 22. With Nix, `nix develop` gives you both, and the scripts below use it
+by themselves.
 
 ```sh
-./run        # build the UI if it is stale, and serve on http://127.0.0.1:5727 without opening a window
-./publish    # build the standalone app for Linux and Windows into dist/
+./run        # start it at http://127.0.0.1:5727 without opening a window
+./publish    # build the Linux and Windows files into dist/
 ```
 
-For work on the interface, run `npm run dev` in `web/` alongside `./run` for hot reloading on port 5728.
-`npm test` runs the tests of the mixing logic and the beatmap reader.
+- `server/` reads and writes osu!'s database (C#).
+- `web/` is the interface and the preview (TypeScript, React, PixiJS).
+- In `web/`, `npm run dev` gives live reloading on port 5728 while `./run` is running, and `npm test` runs
+  the tests.
+- Pushing a tag like `v0.2.0` builds both files and adds them to a GitHub release.
+- The Realm package in `server/server.csproj` has to be the same version osu!lazer uses, or the database
+  won't open.
 
-Pushing a tag like `v0.2.0` builds both platforms and attaches them to a GitHub release.
+## Limits
 
-## Known limits
-
-- The preview is an approximation of the game. Slider bodies appear whole rather than snaking in, and beatmap
-  skins, storyboards and custom beatmap samples are not shown or played.
-- Applying has only been tried with osu! closed. With the game running it may hold its database in a way that
-  gets in the mixer's way, so close the game first if Apply fails.
-- The Windows build has not been run on Windows yet.
+- The preview is close to the game but not identical. Sliders appear all at once instead of snaking in, and
+  beatmap skins, storyboards and a beatmap's own hit sounds are not used.
+- Applying has only been tested with osu! closed. If Apply fails, close osu! and try again.
+- The Windows version has not been tested on Windows yet.
+- The first time you run it, it downloads osu!'s built-in skin so it can show default elements. That needs
+  an internet connection once.
+- Only osu! (standard) is previewed. Elements for other modes can be mixed but not seen.
