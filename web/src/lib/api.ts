@@ -12,6 +12,8 @@ export interface AppState {
   osuDir: string;
   /** Set when there is no osu! database where the mixer looked. */
   missing: boolean;
+  /** Whether the mixer can find osu! by itself while the game is running. */
+  findsRunningGame: boolean;
   blank: { png: string; wav: string };
   skins: RawSkin[];
   selection: Partial<Selection> | null;

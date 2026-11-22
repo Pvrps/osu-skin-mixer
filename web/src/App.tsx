@@ -17,6 +17,7 @@ interface Loaded {
   osuDir: string;
   /** Whether osu!'s data was found there at all. */
   missing: boolean;
+  findsRunningGame: boolean;
   blank: BlankHashes;
   /** Every skin in the game, the mix itself included once it has been written. */
   skins: Skin[];
@@ -77,7 +78,7 @@ async function load(): Promise<{ loaded: Loaded; selection: Selection }> {
   const state = await fetchState();
   const skins = state.skins.map(toSkin).sort((a, b) => a.name.localeCompare(b.name));
 
-  return { loaded: { osuDir: state.osuDir, missing: state.missing, blank: state.blank, skins }, selection: sanitise(state.selection, skins) };
+  return { loaded: { osuDir: state.osuDir, missing: state.missing, findsRunningGame: state.findsRunningGame, blank: state.blank, skins }, selection: sanitise(state.selection, skins) };
 }
 
 export function App() {
@@ -276,7 +277,7 @@ export function App() {
   if (!loaded || !selection) return <div className="onboarding muted">Reading skins…</div>;
 
   // Nothing can be done until osu! has been found, so reload from scratch once it has.
-  if (loaded.missing) return <Locate lookedIn={loaded.osuDir} onFound={() => location.reload()} />;
+  if (loaded.missing) return <Locate lookedIn={loaded.osuDir} findsRunningGame={loaded.findsRunningGame} onFound={() => location.reload()} />;
 
   if (!selection.base || selection.name.trim() === "") {
     return (

@@ -4,11 +4,13 @@ import { setLocation } from "../lib/api";
 interface Props {
   /** Where the mixer expected to find osu!'s data. */
   lookedIn: string;
+  /** Whether starting osu! is enough for the mixer to find it. */
+  findsRunningGame: boolean;
   onFound: () => void;
 }
 
 /** Asks where osu! keeps its data, when it isn't in any of the usual places. */
-export function Locate({ lookedIn, onFound }: Props) {
+export function Locate({ lookedIn, findsRunningGame, onFound }: Props) {
   const [path, setPath] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
@@ -41,8 +43,13 @@ export function Locate({ lookedIn, onFound }: Props) {
           The mixer looked for osu!'s data in <code>{lookedIn}</code> and didn't find it. This is the folder holding your skins and beatmaps, not
           the one the game itself is in.
         </p>
+        {findsRunningGame && (
+          <p className="muted">
+            The quickest fix is to start osu! and press "Look again": while the game is running, the mixer can see where it keeps its data.
+          </p>
+        )}
         <p className="muted">
-          To find it, open osu! and go to Settings, General, then "Open osu! folder". Copy the address of the folder that opens and paste it here.
+          {findsRunningGame ? "Otherwise, open osu!" : "To find it, open osu!"} and go to Settings, General, then "Open osu! folder". Copy the address of the folder that opens and paste it here.
         </p>
 
         <label className="field">
@@ -53,6 +60,12 @@ export function Locate({ lookedIn, onFound }: Props) {
 
         <div className="onboarding-actions">
           <span className="muted">It only needs telling once.</span>
+          <span className="spacer" />
+          {findsRunningGame && (
+            <button type="button" onClick={() => location.reload()}>
+              Look again
+            </button>
+          )}
           <button type="submit" className="primary" disabled={path.trim() === "" || checking}>
             {checking ? "Checking…" : "Continue"}
           </button>

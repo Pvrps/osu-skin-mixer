@@ -27,15 +27,28 @@ else
 string stateDir = Environment.GetEnvironmentVariable("MIXER_STATE_DIR") ?? Path.Combine(stateHome, "osu-skin-mixer");
 string locationPath = Path.Combine(stateDir, "osu-location.txt");
 
-// Where osu! keeps its data: wherever the user said, or else the first of the usual places which has a database.
-// A Flatpak install keeps its data in a sandbox of its own.
-string[] usualPlaces = [Path.Combine(osuHome, "osu"), Path.Combine(home, ".var", "app", "sh.ppy.osu", "data", "osu")];
-
-string osuDir = resolveOsuDir(
+// Where osu! keeps its data: wherever the user said, or the folder a running osu! is using, or else the first of
+// the usual places which has a database. Failing all of those, the usual place is named so the user can be asked.
+string locateOsu() => resolveOsuDir(
     Environment.GetEnvironmentVariable("OSU_DIR")
     ?? (File.Exists(locationPath) ? File.ReadAllText(locationPath).Trim() : null)
-    ?? usualPlaces.Select(resolveOsuDir).FirstOrDefault(hasDatabase)
-    ?? usualPlaces[0]);
+    ?? remember(OsuLocator.FromRunningGame())
+    ?? OsuLocator.UsualPlaces(home, osuHome).Select(resolveOsuDir).FirstOrDefault(hasDatabase)
+    ?? Path.Combine(osuHome, "osu"));
+
+// A folder found through the running game couldn't be found again once the game is closed, so it is kept.
+string? remember(string? found)
+{
+    if (found != null)
+    {
+        Directory.CreateDirectory(stateDir);
+        File.WriteAllText(locationPath, found);
+    }
+
+    return found;
+}
+
+string osuDir = locateOsu();
 string? webRoot = Environment.GetEnvironmentVariable("WEB_ROOT");
 
 int port;
@@ -121,15 +134,29 @@ app.MapGet("/api/session", async (HttpContext context) =>
     }
 });
 
-app.MapGet("/api/state", () => new
+app.MapGet("/api/state", () =>
+{
+    // osu! may have been installed, or started, since the mixer last looked.
+    if (!hasDatabase(osuDir) && hasDatabase(locateOsu()))
+    {
+        osuDir = locateOsu();
+        store = createStore();
+    }
+
+    return state();
+});
+
+object state() => new
 {
     osuDir,
+    // A running osu! can be found wherever it keeps its data, which is worth telling someone who is being asked.
+    findsRunningGame = OperatingSystem.IsLinux(),
     // Without a database there is nothing to show yet, and the page asks where osu! is instead.
     missing = !hasDatabase(osuDir),
     blank = new { png = BlankFiles.PngHash, wav = BlankFiles.WavHash },
     skins = hasDatabase(osuDir) ? store.GetSkins() : [],
     selection = File.Exists(selectionPath) ? JsonSerializer.Deserialize<JsonElement>(File.ReadAllText(selectionPath)) : (JsonElement?)null,
-});
+};
 
 // For installs which aren't in one of the usual places: the user says where osu!'s data is, and it is remembered.
 app.MapPost("/api/location", (LocationRequest request) =>
@@ -254,7 +281,7 @@ OsuStore createStore() => new OsuStore(osuDir, stateDir) { ExtraContent = hash =
 string contentTypeFor(string? name) =>
     name != null && contentTypes.TryGetContentType(name, out string? type) ? type : "application/octet-stream";
 
-static bool hasDatabase(string dir) => File.Exists(Path.Combine(dir, "client.realm"));
+static bool hasDatabase(string dir) => OsuLocator.HasDatabase(dir);
 
 // lazer lets the data directory be relocated, in which case the default location only holds a pointer.
 static string resolveOsuDir(string dir)
