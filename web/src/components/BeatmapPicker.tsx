@@ -6,7 +6,8 @@ import { useDismiss } from "./useDismiss";
 export const DEMO_ID = "demo";
 
 interface Props {
-  beatmaps: Beatmap[];
+  /** Null while the library is still being read. */
+  beatmaps: Beatmap[] | null;
   chosen: string;
   onChoose: (id: string) => void;
   onClose: () => void;
@@ -20,7 +21,10 @@ export const formatTime = (ms: number) => {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 };
 
-export function BeatmapPicker({ beatmaps, chosen, onChoose, onClose }: Props) {
+const NONE: Beatmap[] = [];
+
+export function BeatmapPicker({ beatmaps: library, chosen, onChoose, onClose }: Props) {
+  const beatmaps = library ?? NONE;
   const [filter, setFilter] = useState("");
   const root = useRef<HTMLDivElement>(null);
 
@@ -41,7 +45,7 @@ export function BeatmapPicker({ beatmaps, chosen, onChoose, onClose }: Props) {
 
   return (
     <div className="picker" ref={root} role="dialog" aria-label="Choose what to preview with">
-      <input type="search" autoFocus placeholder={`Search ${beatmaps.length} beatmaps`} value={filter} onChange={(e) => setFilter(e.target.value)} />
+      <input type="search" autoFocus placeholder={library ? `Search ${beatmaps.length} beatmaps` : "Reading your beatmaps…"} value={filter} onChange={(e) => setFilter(e.target.value)} />
 
       <div className="picker-list">
         {words.length === 0 && (

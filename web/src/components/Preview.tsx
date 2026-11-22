@@ -18,6 +18,8 @@ const STORAGE_KEY = "osu-skin-mixer.preview";
 
 interface Remembered {
   beatmap?: string;
+  /** All of the beatmap last chosen, so it can be shown again without first reading through the whole library. */
+  map?: Beatmap;
   sound?: boolean;
   volume?: number;
   backdrop?: number;
@@ -30,6 +32,16 @@ function remembered(): Remembered {
   } catch {
     return {};
   }
+}
+
+type Choice = Beatmap | typeof DEMO_ID;
+
+/** What to preview with, out of the whole library: the one asked for if it is there, and failing that a fitting one. */
+function pick(all: Beatmap[], wanted: string | null | undefined): Choice {
+  if (wanted === DEMO_ID || all.length === 0) return DEMO_ID;
+
+  // Failing a choice, start with something of middling difficulty: busy enough to show a skin off, and still readable.
+  return all.find((b) => b.id === wanted) ?? all.reduce((best, b) => (Math.abs(b.stars - 4) < Math.abs(best.stars - 4) ? b : best));
 }
 
 const icon = (path: React.ReactNode) => (
@@ -79,8 +91,17 @@ export function Preview({ skin, defaults, note }: Props) {
   });
   const [loading, setLoading] = useState(true);
   const [beatmaps, setBeatmaps] = useState<Beatmap[] | null>(null);
-  const [chosen, setChosen] = useState<string | null>(null);
+  // The beatmap chosen last time is picked up straight away. Only without one does the library have to be read
+  // first, which takes a moment when it is large.
+  const [chosen, setChosen] = useState<Choice | null>(() => {
+    if (params.current.get("map")) return null;
+    if (saved.current.beatmap === DEMO_ID) return DEMO_ID;
+
+    return saved.current.map ?? null;
+  });
   const [scene, setScene] = useState<Scene>(DEMO_SCENE);
+  /** Whether the first scene is on the stage. Until then there is nothing to see, and the preview says it is loading. */
+  const [shown, setShown] = useState(false);
   const [time, setTime] = useState(0);
   const [picking, setPicking] = useState(false);
   const [jumping, setJumping] = useState(false);
@@ -103,18 +124,24 @@ export function Preview({ skin, defaults, note }: Props) {
     };
   }, []);
 
-  useEffect(() => {
-    void fetchBeatmaps().then((all) => {
+  // The library is read once, the first time it is wanted: to choose from, or to start with when nothing was chosen.
+  const library = useRef<Promise<Beatmap[]> | null>(null);
+  const loadBeatmaps = useCallback(() => {
+    library.current ??= fetchBeatmaps().then((all) => {
       setBeatmaps(all);
-
-      const wanted = params.current.get("map") ?? saved.current.beatmap;
-
-      if (wanted === DEMO_ID || all.length === 0) setChosen(DEMO_ID);
-      else if (wanted && all.some((b) => b.id === wanted)) setChosen(wanted);
-      // Failing a choice, start with something of middling difficulty: busy enough to show a skin off, and still readable.
-      else setChosen(all.reduce((best, b) => (Math.abs(b.stars - 4) < Math.abs(best.stars - 4) ? b : best)).id);
+      return all;
     });
+
+    return library.current;
   }, []);
+
+  const startedWithout = useRef(chosen === null);
+
+  useEffect(() => {
+    if (!startedWithout.current) return;
+
+    void loadBeatmaps().then((all) => setChosen((current) => current ?? pick(all, params.current.get("map") ?? saved.current.beatmap)));
+  }, [loadBeatmaps]);
 
   useEffect(() => {
     renderer.current?.setSettings(settings);
@@ -122,13 +149,15 @@ export function Preview({ skin, defaults, note }: Props) {
 
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ beatmap: chosen ?? undefined, sound: settings.sound, volume: settings.volume, backdrop: settings.backdrop, hud: settings.hud } satisfies Remembered));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ beatmap: chosen === null ? saved.current.beatmap : chosen === DEMO_ID ? DEMO_ID : chosen.id, map: chosen === null ? saved.current.map : chosen === DEMO_ID ? undefined : chosen, sound: settings.sound, volume: settings.volume, backdrop: settings.backdrop, hud: settings.hud } satisfies Remembered));
     } catch {
       // Without storage the choices simply aren't remembered.
     }
   }, [chosen, settings.sound, settings.volume, settings.backdrop, settings.hud]);
 
-  const beatmap = beatmaps?.find((b) => b.id === chosen) ?? null;
+  const beatmap = chosen !== null && chosen !== DEMO_ID ? chosen : null;
+  /** Whether a beatmap which wouldn't load has already been looked up afresh, so that is only tried the once. */
+  const lookedUp = useRef(false);
 
   useEffect(() => {
     if (chosen === null || !renderer.current) return;
@@ -136,16 +165,24 @@ export function Preview({ skin, defaults, note }: Props) {
     let current = true;
     const frozen = frozenAt.current !== null ? Number(frozenAt.current) || 0 : null;
 
-    const show = (scene: typeof DEMO_SCENE, startAt: number, audioUrl: string | null, backgroundUrl: string | null) => {
+    const show = async (scene: typeof DEMO_SCENE, startAt: number, audioUrl: string | null, backgroundUrl: string | null) => {
       if (!current || !renderer.current) return;
 
-      renderer.current.setScene(scene, { audioUrl, backgroundUrl }, frozen ?? startAt);
+      // What was showing stays until the new scene is ready to take its place.
+      const made = await renderer.current.setScene(scene, { audioUrl, backgroundUrl }, frozen ?? startAt);
+      if (!made || !current) return;
+
       setScene(scene);
+      setShown(true);
     };
 
+    const showDemo = () => void show(DEMO_SCENE, DEMO_SCENE.start, null, null);
+
     if (!beatmap) {
-      show(DEMO_SCENE, DEMO_SCENE.start, null, null);
-      return;
+      showDemo();
+      return () => {
+        current = false;
+      };
     }
 
     void fetch(fileUrl({ name: "beatmap.osu", hash: beatmap.file }))
@@ -154,27 +191,45 @@ export function Preview({ skin, defaults, note }: Props) {
         const scene = parseBeatmap(text);
 
         if (!scene) {
-          show(DEMO_SCENE, DEMO_SCENE.start, null, null);
+          showDemo();
           return;
         }
 
         // Songs mark where their best part starts, which is a better first impression than an intro.
         const startAt = beatmap.previewTime > scene.start && beatmap.previewTime < scene.end - 5000 ? beatmap.previewTime : scene.start;
 
-        show(
+        void show(
           scene,
           startAt,
           beatmap.audio ? fileUrl({ name: beatmap.audioName ?? "audio.mp3", hash: beatmap.audio }) : null,
           beatmap.background ? fileUrl({ name: beatmap.backgroundName ?? "background.jpg", hash: beatmap.background }) : null,
         );
       })
-      .catch(() => show(DEMO_SCENE, DEMO_SCENE.start, null, null));
+      .catch(() => {
+        if (!current) return;
+
+        if (lookedUp.current) {
+          showDemo();
+          return;
+        }
+
+        // The beatmap remembered from last time may have been changed or deleted since. The library knows.
+        lookedUp.current = true;
+
+        void loadBeatmaps().then((all) => {
+          if (!current) return;
+
+          const found = pick(all, beatmap.id);
+
+          if (found !== DEMO_ID && found.file !== beatmap.file) setChosen(found);
+          else showDemo();
+        });
+      });
 
     return () => {
       current = false;
     };
-    // The beatmap is looked up from the choice, so the choice alone decides when to reload.
-  }, [chosen, beatmap]);
+  }, [chosen, beatmap, loadBeatmaps]);
 
   useEffect(() => {
     if (!skin || !defaults || !renderer.current) return;
@@ -200,7 +255,7 @@ export function Preview({ skin, defaults, note }: Props) {
       <div className="preview-stage">
         <div className="preview-canvas" ref={host} />
         {note && <div className="preview-note">{note}</div>}
-        {loading && <div className="preview-loading">Loading…</div>}
+        {(loading || !shown) && <div className="preview-loading">Loading…</div>}
         {waitingForClick && settings.playing && <div className="preview-hint">Click anywhere to start the sound</div>}
       </div>
 
@@ -230,18 +285,23 @@ export function Preview({ skin, defaults, note }: Props) {
         </button>
 
         <div className="transport-song">
-          <button className="song" title="Choose a beatmap to preview with" aria-haspopup="dialog" aria-expanded={picking} onClick={() => setPicking((v) => !v)}>
+          <button className="song" title="Choose a beatmap to preview with" aria-haspopup="dialog" aria-expanded={picking}
+            onClick={() => {
+              void loadBeatmaps();
+              setPicking((v) => !v);
+            }}
+          >
             {ICONS.music}
             <span className="song-name">{beatmap ? `${beatmap.title} [${beatmap.difficulty}]` : "Demo pattern"}</span>
           </button>
-          {picking && beatmaps && (
+          {picking && (
             <BeatmapPicker
               beatmaps={beatmaps}
-              chosen={chosen ?? DEMO_ID}
+              chosen={beatmap?.id ?? DEMO_ID}
               onChoose={(id) => {
                 // A fresh choice always plays from its own starting point.
                 frozenAt.current = null;
-                setChosen(id);
+                setChosen(beatmaps?.find((b) => b.id === id) ?? DEMO_ID);
                 setPicking(false);
               }}
               onClose={closePicker}

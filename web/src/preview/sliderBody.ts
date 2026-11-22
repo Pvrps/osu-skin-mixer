@@ -1,12 +1,27 @@
 import type { Rgb } from "./assets";
-import { OBJECT_RADIUS, type SliderObject } from "./scene";
+import { OBJECT_RADIUS, type Point } from "./scene";
 
-export interface SliderBodyImage {
-  canvas: HTMLCanvasElement;
+/** Everything it takes to draw one slider's body. Plain data, so it can be handed to a worker. */
+export interface SliderBodyRequest {
+  path: Point[];
+  objectScale: number;
+  /** Image pixels per playfield unit. */
+  pixelsPerUnit: number;
+  border: Rgb;
+  accent: Rgb;
+}
+
+/** Where a slider's body sits, and how large an image it takes. */
+export interface SliderBodyLayout {
   /** Top-left of the image in playfield coordinates. */
   x: number;
   y: number;
+  /** Size of the image in its own pixels. */
+  width: number;
+  height: number;
 }
+
+type Context = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 
 // The visible body of a legacy slider is slightly narrower than a hit circle; the remainder is a soft shadow.
 const LEGACY_CIRCLE_RADIUS = OBJECT_RADIUS - 5;
@@ -37,25 +52,14 @@ function colourAt(position: number, border: Rgb, accent: Rgb): Rgba {
  * Draws a slider body by stroking its path in ever narrower bands, each replacing what lies beneath it, so every
  * pixel ends up coloured by its distance from the centre line.
  */
-export function renderSliderBody(slider: SliderObject, objectScale: number, pixelsPerUnit: number, border: Rgb, accent: Rgb): SliderBodyImage {
+export function paintSliderBody(context: Context, { path, objectScale, pixelsPerUnit, border, accent }: SliderBodyRequest, { x, y }: SliderBodyLayout) {
   const radius = OBJECT_RADIUS * objectScale;
-  const pad = radius + 2;
 
-  const xs = slider.path.map((p) => p.x);
-  const ys = slider.path.map((p) => p.y);
-  const x = Math.min(...xs) - pad;
-  const y = Math.min(...ys) - pad;
-
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, Math.ceil((Math.max(...xs) + pad - x) * pixelsPerUnit));
-  canvas.height = Math.max(1, Math.ceil((Math.max(...ys) + pad - y) * pixelsPerUnit));
-
-  const context = canvas.getContext("2d")!;
   context.lineCap = "round";
   context.lineJoin = "round";
 
   context.beginPath();
-  slider.path.forEach((p, i) => {
+  path.forEach((p, i) => {
     const px = (p.x - x) * pixelsPerUnit;
     const py = (p.y - y) * pixelsPerUnit;
 
@@ -86,6 +90,43 @@ export function renderSliderBody(slider: SliderObject, objectScale: number, pixe
     context.strokeStyle = `rgba(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)}, ${a})`;
     context.stroke();
   });
+}
 
-  return { canvas, x, y };
+/** The image a slider's body needs: large enough for its path and the width of the body around it. */
+export function layoutSliderBody({ path, objectScale, pixelsPerUnit }: SliderBodyRequest): SliderBodyLayout {
+  const pad = OBJECT_RADIUS * objectScale + 2;
+
+  let left = Infinity;
+  let top = Infinity;
+  let right = -Infinity;
+  let bottom = -Infinity;
+
+  for (const p of path) {
+    left = Math.min(left, p.x);
+    top = Math.min(top, p.y);
+    right = Math.max(right, p.x);
+    bottom = Math.max(bottom, p.y);
+  }
+
+  const x = left - pad;
+  const y = top - pad;
+
+  return {
+    x,
+    y,
+    width: Math.max(1, Math.ceil((right + pad - x) * pixelsPerUnit)),
+    height: Math.max(1, Math.ceil((bottom + pad - y) * pixelsPerUnit)),
+  };
+}
+
+/** Draws a slider's body here and now, for browsers which can't have it drawn in the background. */
+export function renderSliderBody(request: SliderBodyRequest): SliderBodyLayout & { canvas: HTMLCanvasElement } {
+  const layout = layoutSliderBody(request);
+  const canvas = document.createElement("canvas");
+
+  canvas.width = layout.width;
+  canvas.height = layout.height;
+  paintSliderBody(canvas.getContext("2d")!, request, layout);
+
+  return { ...layout, canvas };
 }

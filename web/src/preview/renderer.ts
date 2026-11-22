@@ -20,7 +20,8 @@ import {
   spinRotation,
   startPosition,
 } from "./scene";
-import { renderSliderBody } from "./sliderBody";
+import { type SliderBodyRequest, renderSliderBody } from "./sliderBody";
+import type { SliderBodyJob, SliderBodyResult } from "./sliderBody.worker";
 
 interface DrawOptions {
   scale?: number;
@@ -132,6 +133,11 @@ export interface SceneMedia {
 /** How long a slider's body is kept after it was last drawn. */
 const SLIDER_BODY_LIFETIME = 3000;
 
+/** How long before a slider comes into view its body is asked for, so it is there by the time it is wanted. */
+const SLIDER_BODY_LEAD = 1500;
+
+type SliderBody = Tex & { x: number; y: number; usedAt: number };
+
 export class PreviewRenderer {
   private readonly app = new Application();
   private readonly stage = new Container();
@@ -152,13 +158,18 @@ export class PreviewRenderer {
 
   private scene: Scene = DEMO_SCENE;
   private readonly background = new Sprite();
-  private backgroundGeneration = 0;
 
   /** Called a few times a second with the current time, for whatever shows playback progress. */
   onProgress: ((time: number) => void) | null = null;
   private lastProgress = 0;
 
-  private sliderBodies = new Map<number, Tex & { x: number; y: number; usedAt: number }>();
+  private sliderBodies = new Map<number, SliderBody>();
+  /** Draws slider bodies in the background. Null where a browser can't, and they are drawn here instead. */
+  private bodyWorker: Worker | null = null;
+  /** Sliders whose body has been asked for and isn't back yet. */
+  private readonly pendingBodies = new Set<number>();
+  /** Counts up whenever bodies drawn so far stop being right, so one still on its way can be told to be stale. */
+  private bodyGeneration = 0;
   private lastSweep = 0;
   private readonly cropped = new Map<string, Texture>();
   private skinGeneration = 0;
@@ -172,6 +183,35 @@ export class PreviewRenderer {
   private resizeObserver: ResizeObserver | null = null;
   private destroyed = false;
   private ready = false;
+  /** Whether a scene has been chosen yet. Until one has, there is nothing to show but an empty stage. */
+  private started = false;
+  private sceneGeneration = 0;
+
+  constructor() {
+    if (typeof Worker === "undefined" || typeof OffscreenCanvas === "undefined") return;
+
+    try {
+      const worker = new Worker(new URL("./sliderBody.worker.ts", import.meta.url), { type: "module" });
+
+      worker.onmessage = (event: MessageEvent<SliderBodyResult>) => this.acceptBody(event.data);
+
+      // A worker which can't run is given up on, and whatever was asked of it is drawn here when next wanted.
+      worker.onerror = () => {
+        worker.terminate();
+        this.bodyWorker = null;
+        this.pendingBodies.clear();
+      };
+
+      this.bodyWorker = worker;
+    } catch {
+      this.bodyWorker = null;
+    }
+  }
+
+  /** Whether the preview is moving: it is meant to be, and there is both a scene and a skin to show it with. */
+  private get running() {
+    return this.settings.playing && this.started && this.skin !== null;
+  }
 
   async init(host: HTMLElement) {
     await this.app.init({
@@ -206,6 +246,8 @@ export class PreviewRenderer {
     this.destroyed = true;
     this.resizeObserver?.disconnect();
     this.audio.destroy();
+    this.bodyWorker?.terminate();
+    this.bodyWorker = null;
 
     if (this.ready) {
       this.clearGenerated();
@@ -225,7 +267,7 @@ export class PreviewRenderer {
       else this.audio.disable();
     }
 
-    this.audio.syncMusic(settings.playing, this.time);
+    this.audio.syncMusic(this.running, this.time);
   }
 
   /** Jumps to a point in the scene. */
@@ -245,34 +287,32 @@ export class PreviewRenderer {
     return this.audio.waitingForClick;
   }
 
-  /** Switches to a different set of hit objects, starting from the given time. */
-  setScene(scene: Scene, media: SceneMedia, startAt: number) {
+  /**
+   * Switches to a different set of hit objects, starting from the given time. The switch is made in one go once
+   * the scene's picture is in, so what was showing stays until all of the new scene can take its place. Resolves
+   * to whether the switch was made, which it isn't if another scene was asked for in the meantime.
+   */
+  async setScene(scene: Scene, media: SceneMedia, startAt: number): Promise<boolean> {
+    const generation = ++this.sceneGeneration;
+    const picture = media.backgroundUrl ? await Assets.load<Texture>({ src: media.backgroundUrl, parser: "texture" }).catch(() => null) : null;
+
+    if (generation !== this.sceneGeneration || this.destroyed) return false;
+
     this.scene = scene;
+    this.started = true;
     this.clearGenerated();
     this.configureTrail();
 
     this.audio.setMusic(media.audioUrl);
     this.seek(startAt);
-    this.audio.syncMusic(this.settings.playing, this.time);
-
-    const generation = ++this.backgroundGeneration;
+    this.audio.syncMusic(this.running, this.time);
 
     // Without a picture of its own, a scene gets a backdrop drawn here, so skins are never judged against flat grey.
-    this.background.texture = this.backdrop();
+    this.background.texture = picture ?? this.backdrop();
     this.background.visible = true;
     this.applyBackdrop();
 
-    if (media.backgroundUrl) {
-      void Assets.load<Texture>({ src: media.backgroundUrl, parser: "texture" })
-        .then((texture) => {
-          if (generation !== this.backgroundGeneration || this.destroyed) return;
-
-          this.background.texture = texture;
-          this.background.visible = true;
-          this.applyBackdrop();
-        })
-        .catch(() => {});
-    }
+    return true;
   }
 
   private fallbackBackdrop: Texture | null = null;
@@ -396,6 +436,9 @@ export class PreviewRenderer {
 
     this.configureTrail();
     this.clearGenerated();
+
+    // The song waits for the first skin, so that it never plays to an empty stage.
+    this.audio.syncMusic(this.running, this.time);
   }
 
   private configureTrail() {
@@ -414,6 +457,10 @@ export class PreviewRenderer {
   private clearGenerated() {
     for (const body of this.sliderBodies.values()) body.texture.destroy(true);
     this.sliderBodies.clear();
+
+    // Any still being drawn are for what has just been replaced, and are thrown away when they arrive.
+    this.bodyGeneration++;
+    this.pendingBodies.clear();
 
     for (const texture of this.cropped.values()) texture.destroy(false);
     this.cropped.clear();
@@ -586,7 +633,7 @@ export class PreviewRenderer {
     const previous = this.time;
     const scene = this.scene;
 
-    if (this.settings.playing) {
+    if (this.running) {
       this.time += Math.min(deltaMs, 100);
 
       // With the song playing, it keeps the time: ease towards it, or jump if the two have come apart.
@@ -620,8 +667,9 @@ export class PreviewRenderer {
       this.labels.clear();
     }
 
-    if (this.skin) {
+    if (this.skin && this.started) {
       this.playSounds(previous, this.time);
+      this.prepareSliders(this.time);
       this.drawScene(this.time);
     }
 
@@ -649,12 +697,9 @@ export class PreviewRenderer {
     }
   }
 
-  /** The objects which could be on screen at a time, in order. Everything else is skipped without a look. */
-  private visibleObjects(time: number): SceneObject[] {
+  /** How many of the scene's objects have come into view by a time. They are in order, so it is found by halving. */
+  private appearedBy(time: number): number {
     const objects = this.scene.objects;
-    const linger = JUDGEMENT_FADE_OUT_DELAY + JUDGEMENT_FADE_OUT + MISS_DELAY;
-
-    // Objects are in order of their start, so the last one which has appeared can be found by halving.
     let low = 0;
     let high = objects.length;
 
@@ -664,6 +709,26 @@ export class PreviewRenderer {
       if (objects[middle]!.time - this.scene.preempt <= time) low = middle + 1;
       else high = middle;
     }
+
+    return low;
+  }
+
+  /** Asks for the bodies of the sliders about to come into view, so each is ready before it is first drawn. */
+  private prepareSliders(time: number) {
+    const objects = this.scene.objects;
+    const until = this.appearedBy(time + SLIDER_BODY_LEAD);
+
+    for (let i = this.appearedBy(time); i < until; i++) {
+      const object = objects[i]!;
+      if (object.kind === "slider") this.sliderBody(object);
+    }
+  }
+
+  /** The objects which could be on screen at a time, in order. Everything else is skipped without a look. */
+  private visibleObjects(time: number): SceneObject[] {
+    const objects = this.scene.objects;
+    const linger = JUDGEMENT_FADE_OUT_DELAY + JUDGEMENT_FADE_OUT + MISS_DELAY;
+    const low = this.appearedBy(time);
 
     const visible: SceneObject[] = [];
 
@@ -821,21 +886,54 @@ export class PreviewRenderer {
 
   // ---- sliders ------------------------------------------------------------------------------------------------
 
-  private sliderBody(slider: SliderObject): Tex & { x: number; y: number; usedAt: number } {
-    let body = this.sliderBodies.get(slider.id);
+  /** A slider's body, or null while it is still being drawn. Asking is what starts it being drawn. */
+  private sliderBody(slider: SliderObject): SliderBody | null {
+    const ready = this.sliderBodies.get(slider.id);
 
-    if (!body) {
-      const skin = this.skin!;
-      const resolution = this.app.renderer.resolution;
-      const accent = skin.colour("SliderTrackOverride") ?? this.comboColours[slider.combo % this.comboColours.length] ?? [255, 255, 255];
-      const image = renderSliderBody(slider, this.scene.objectScale, this.unit * resolution, skin.colour("SliderBorder") ?? [255, 255, 255], accent);
-      const texture = Texture.from(image.canvas);
+    if (ready) return ready;
+    if (this.pendingBodies.has(slider.id)) return null;
 
-      body = { texture, width: image.canvas.width / resolution, height: image.canvas.height / resolution, ratio: 1 / resolution, fromDefault: false, x: image.x, y: image.y, usedAt: 0 };
-      this.sliderBodies.set(slider.id, body);
+    const skin = this.skin!;
+    const request: SliderBodyRequest = {
+      path: slider.path,
+      objectScale: this.scene.objectScale,
+      pixelsPerUnit: this.unit * this.app.renderer.resolution,
+      border: skin.colour("SliderBorder") ?? [255, 255, 255],
+      accent: skin.colour("SliderTrackOverride") ?? this.comboColours[slider.combo % this.comboColours.length] ?? [255, 255, 255],
+    };
+
+    if (this.bodyWorker) {
+      this.pendingBodies.add(slider.id);
+      this.bodyWorker.postMessage({ id: slider.id, generation: this.bodyGeneration, request } satisfies SliderBodyJob);
+
+      return null;
     }
 
+    const image = renderSliderBody(request);
+
+    return this.keepBody(slider.id, image.canvas, image.x, image.y);
+  }
+
+  private keepBody(id: number, image: HTMLCanvasElement | ImageBitmap, x: number, y: number): SliderBody {
+    const resolution = this.app.renderer.resolution;
+
+    // Counted as used from the moment it is made, or one made ahead of its slider would be swept away unseen.
+    const body: SliderBody = { texture: Texture.from(image), width: image.width / resolution, height: image.height / resolution, ratio: 1 / resolution, fromDefault: false, x, y, usedAt: performance.now() };
+
+    this.sliderBodies.set(id, body);
+
     return body;
+  }
+
+  /** Takes a body the worker has finished, unless what it was drawn for has since been replaced. */
+  private acceptBody({ id, generation, bitmap, x, y }: SliderBodyResult) {
+    if (generation !== this.bodyGeneration || this.destroyed || !this.ready) {
+      bitmap.close();
+      return;
+    }
+
+    this.pendingBodies.delete(id);
+    this.keepBody(id, bitmap, x, y);
   }
 
   private drawSlider(time: number, slider: SliderObject) {
@@ -851,9 +949,13 @@ export class PreviewRenderer {
     const base = OBJECT_SCALE * this.unit;
 
     const body = this.sliderBody(slider);
-    body.usedAt = performance.now();
-    const bodyOrigin = this.toScreen(body);
-    this.draw(body, bodyOrigin.x, bodyOrigin.y, { anchorX: 0, anchorY: 0, alpha: fadeIn * fadeOut });
+
+    // One not drawn yet is left out for the frame or two it takes, which only happens after a jump in time.
+    if (body) {
+      body.usedAt = performance.now();
+      const bodyOrigin = this.toScreen(body);
+      this.draw(body, bodyOrigin.x, bodyOrigin.y, { anchorX: 0, anchorY: 0, alpha: fadeIn * fadeOut });
+    }
 
     const firstArrival = slider.time + slider.spanDuration;
 
