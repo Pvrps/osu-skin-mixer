@@ -1,3 +1,4 @@
+import { Brand } from "./Brand";
 import { useState } from "react";
 import { setLocation } from "../lib/api";
 
@@ -37,7 +38,7 @@ export function Locate({ lookedIn, findsRunningGame, onFound }: Props) {
           if (path.trim() !== "" && !checking) void submit();
         }}
       >
-        <div className="brand">osu! skin mixer</div>
+        <Brand />
         <h1>Where is osu! installed?</h1>
         <p className="muted">
           The mixer looked for osu!'s data in <code>{lookedIn}</code> and didn't find it. This is the folder holding your skins and beatmaps, not

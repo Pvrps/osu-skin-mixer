@@ -1,3 +1,4 @@
+import { Brand } from "./Brand";
 import { useMemo, useState } from "react";
 import type { ElementIndex } from "../lib/elements";
 import { representative } from "../lib/elements";
@@ -64,7 +65,7 @@ export function Onboarding({ skins, index, osuDir, onCreate }: Props) {
           if (ready) onCreate(trimmed, base, adopt?.id ?? null);
         }}
       >
-        <div className="brand">osu! skin mixer</div>
+        <Brand />
         <h1>Create your mix</h1>
         <p className="muted">
           Your mix is a new skin of its own. It starts as a copy of a skin you already have, and from there you can swap in any element from

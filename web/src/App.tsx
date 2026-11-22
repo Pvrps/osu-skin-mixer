@@ -1,3 +1,4 @@
+import { Brand } from "./components/Brand";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { confirm } from "./components/Confirm";
 import { type EditorFile, ImageEditor } from "./components/ImageEditor";
@@ -346,7 +347,7 @@ export function App() {
   return (
     <div className={`app${showIni ? " with-ini" : ""}`}>
       <header className="topbar">
-        <div className="brand">osu! skin mixer</div>
+        <Brand />
 
         <input
           className="mix-name"
