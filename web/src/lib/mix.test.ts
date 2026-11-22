@@ -26,11 +26,11 @@ describe("ini", () => {
 
 describe("computeMix", () => {
   it("needs a base", () => {
-    expect(computeMix([a, b], { name: "mix", skinId: null, base: null, overrides: {}, elements: {}, recolours: {}, ini: {} })).toBeNull();
+    expect(computeMix([a, b], { name: "mix", skinId: null, base: null, overrides: {}, elements: {}, recolours: {}, edits: {}, ini: {} })).toBeNull();
   });
 
   it("reproduces the base skin, with fonts moved to their own prefixes", () => {
-    const mix = computeMix([a, b], { name: "mix", skinId: null, base: "a", overrides: {}, elements: {}, recolours: {}, ini: {} })!;
+    const mix = computeMix([a, b], { name: "mix", skinId: null, base: "a", overrides: {}, elements: {}, recolours: {}, edits: {}, ini: {} })!;
     const names = mix.files.map((f) => f.name);
 
     expect(names).not.toContain("skin.ini");
@@ -50,7 +50,7 @@ describe("computeMix", () => {
   });
 
   it("takes a category's files and settings from its override, and nothing else", () => {
-    const mix = computeMix([a, b], { name: "mix", skinId: null, base: "a", overrides: { cursor: "b", numbers: "b" }, elements: {}, recolours: {}, ini: { "Colours.SliderBorder": "1,1,1" } })!;
+    const mix = computeMix([a, b], { name: "mix", skinId: null, base: "a", overrides: { cursor: "b", numbers: "b" }, elements: {}, recolours: {}, edits: {}, ini: { "Colours.SliderBorder": "1,1,1" } })!;
     const byName = new Map(mix.files.map((f) => [f.name, f.hash]));
 
     expect(byName.get("cursor.png")).toBe("b:cursor.png");
@@ -69,7 +69,7 @@ describe("computeMix", () => {
 
   it("blanks every element of a category set to none", () => {
     const none = buildNoneSkin([a, b], new Set(["cursormiddle@2x.png", "spinnerbonus.wav", "menu-button@2x.png"]), { png: "P", wav: "W" });
-    const mix = computeMix([a, b, none], { name: "mix", skinId: null, base: "a", overrides: { cursor: NONE_ID, hitsounds: NONE_ID, spinnersounds: NONE_ID, numbers: NONE_ID }, elements: {}, recolours: {}, ini: {} })!;
+    const mix = computeMix([a, b, none], { name: "mix", skinId: null, base: "a", overrides: { cursor: NONE_ID, hitsounds: NONE_ID, spinnersounds: NONE_ID, numbers: NONE_ID }, elements: {}, recolours: {}, edits: {}, ini: {} })!;
     const byName = new Map(mix.files.map((f) => [f.name, f.hash]));
 
     // Elements from any skin and from the built-in skin are covered, so nothing can show through.
@@ -88,7 +88,7 @@ describe("computeMix", () => {
     const d = skin("d", "", ["cursor@2x.png", "cursortrail.png", "hit300.png", "hit100.png", "normal-hitnormal.wav", "normal-hitclap.wav"]);
     const mix = computeMix(
       [c, d],
-      { name: "mix", skinId: null, base: "c", overrides: {}, elements: { cursor: { cursor: "d" }, judgement: { hit300: "d" }, hitsounds: { "normal-hitnormal": "d", "normal-hitclap": "d" } }, recolours: {}, ini: {} },
+      { name: "mix", skinId: null, base: "c", overrides: {}, elements: { cursor: { cursor: "d" }, judgement: { hit300: "d" }, hitsounds: { "normal-hitnormal": "d", "normal-hitclap": "d" } }, recolours: {}, edits: {}, ini: {} },
     )!;
     const byName = new Map(mix.files.map((f) => [f.name, f.hash]));
 
@@ -110,7 +110,7 @@ describe("computeMix", () => {
   it("swaps in recoloured images once they have been made", () => {
     const magenta = { colour: "#ff00ff", mode: "tint" as const };
     const c = skin("c", "", ["cursor.png", "cursortrail.jpg", "cursortrail@2x.png", "normal-hitnormal.wav"]);
-    const selection = { name: "mix", skinId: null, base: "c", overrides: {}, elements: {}, recolours: { cursor: { cursortrail: magenta } }, ini: {} };
+    const selection = { name: "mix", skinId: null, base: "c", overrides: {}, elements: {}, recolours: { cursor: { cursortrail: magenta } }, edits: {}, ini: {} };
 
     const before = computeMix([c], selection)!;
     expect(before.pending.map((p) => p.hash)).toEqual(["c:cursortrail.jpg", "c:cursortrail@2x.png"]);
@@ -126,8 +126,32 @@ describe("computeMix", () => {
     expect(byName.get("cursor.png")).toBe("c:cursor.png");
   });
 
+  it("uses an edited image in place of the file it was made from, and recolours that", () => {
+    const magenta = { colour: "#ff00ff", mode: "tint" as const };
+    const c = skin("c", "", ["cursor.jpg", "cursortrail.png", "hitcircle.png"]);
+    const selection = {
+      name: "mix",
+      skinId: null,
+      base: "c",
+      overrides: {},
+      elements: {},
+      recolours: { cursor: { cursortrail: magenta } },
+      edits: { "c:cursor.jpg": "edited-cursor", "c:cursortrail.png": "edited-trail" },
+      ini: {},
+    };
+
+    const mix = computeMix([c], selection, null, (hash, recolour) => `made:${recolourKey(hash, recolour)}`)!;
+    const byName = new Map(mix.files.map((f) => [f.name, f.hash]));
+
+    // Edited images are always PNGs, whatever they started as.
+    expect(byName.get("cursor.png")).toBe("edited-cursor");
+    expect(byName.has("cursor.jpg")).toBe(false);
+    expect(byName.get("cursortrail.png")).toBe("made:edited-trail-tint-ff00ff");
+    expect(byName.get("hitcircle.png")).toBe("c:hitcircle.png");
+  });
+
   it("recognises an already applied mix", () => {
-    const selection = { name: "mix", skinId: null, base: "a", overrides: { cursor: "b" as const }, elements: {}, recolours: {}, ini: {} };
+    const selection = { name: "mix", skinId: null, base: "a", overrides: { cursor: "b" as const }, elements: {}, recolours: {}, edits: {}, ini: {} };
     const mix = computeMix([a, b], selection)!;
     const applied = mixAsSkin(mix, "mix");
 

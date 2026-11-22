@@ -32,6 +32,8 @@ interface Props {
   groupSource: string;
   elementSources: Record<string, string>;
   recolours: Record<string, Recolour>;
+  /** Images changed in the editor, by the hash of the file they were made from. */
+  edits: Record<string, string>;
   lookup: RecolourLookup;
   colourOf: (skinId: string) => string;
   inherited: IniSection[];
@@ -40,6 +42,10 @@ interface Props {
   onChooseGroup: (skinId: string) => void;
   onChooseElement: (element: string, skinId: string) => void;
   onRecolour: (element: string, recolour: Recolour | null) => void;
+  /** Opens the image editor on the element being looked at. */
+  onEdit: () => void;
+  /** Throws away the edits made to some of a skin's files. */
+  onRevertEdits: (originals: string[]) => void;
   onHover: (hover: Hover | null) => void;
   onShowGroup: () => void;
 }
@@ -124,7 +130,7 @@ function defaultUrl(category: CategoryDef, entry: ElementEntry, defaults: Set<st
 }
 
 function ElementView(props: Props & { entry: ElementEntry }) {
-  const { category, entry, skinsById, defaults, allowNone, base, groupSource, elementSources, recolours, lookup, colourOf, onChooseElement, onRecolour, onHover, onShowGroup } = props;
+  const { category, entry, skinsById, defaults, allowNone, base, groupSource, elementSources, recolours, edits, lookup, colourOf, onChooseElement, onRecolour, onEdit, onRevertEdits, onHover, onShowGroup } = props;
   const [filter, setFilter] = useState("");
 
   const sourceId = elementSources[entry.element] ?? groupSource;
@@ -144,9 +150,12 @@ function ElementView(props: Props & { entry: ElementEntry }) {
   const needle = filter.trim().toLowerCase();
   const visible = needle ? variants.filter((v) => v.skins.some((s) => s.name.toLowerCase().includes(needle))) : variants;
 
-  const current = hasFiles ? representative(entry.bySkin.get(sourceId)!) : null;
-  const made = current && recolour && entry.kind === "image" ? lookup(current.hash, recolour) : undefined;
-  const currentUrl = current ? fileUrl(made ? { name: "recoloured.png", hash: made } : current.source) : null;
+  const files = hasFiles ? entry.bySkin.get(sourceId)! : [];
+  const editedFiles = files.filter((f) => edits[f.hash] !== undefined).map((f) => f.hash);
+  const current = hasFiles ? representative(files) : null;
+  const edited = current ? edits[current.hash] : undefined;
+  const made = current && recolour && entry.kind === "image" ? lookup(edited ?? current.hash, recolour) : undefined;
+  const currentUrl = current ? fileUrl(made ? { name: "recoloured.png", hash: made } : edited ? { name: "edited.png", hash: edited } : current.source) : null;
   const gameUrl = defaultUrl(category, entry, defaults);
   const silent = entry.kind === "audio";
 
@@ -186,13 +195,15 @@ function ElementView(props: Props & { entry: ElementEntry }) {
             <span className="muted">Currently</span>
             <strong>
               {sourceId === NONE_ID ? (silent ? "Silent" : "Hidden") : hasFiles ? skinsById.get(sourceId)?.name : "Game default"}
+              {editedFiles.length > 0 ? ", edited" : ""}
               {recolour && hasFiles ? ", recoloured" : ""}
             </strong>
             {!hasFiles && sourceId !== NONE_ID && sourceId !== DEFAULT_ID && <span className="muted">{skinsById.get(sourceId)?.name} doesn't have this, so osu! shows its own.</span>}
-            {(sourceId !== base || recolour) && (
+            {(sourceId !== base || recolour || editedFiles.length > 0) && (
               <button
                 className="quiet"
                 onClick={() => {
+                  if (editedFiles.length > 0) onRevertEdits(editedFiles);
                   onRecolour(entry.element, null);
                   onChooseElement(entry.element, groupSource);
                 }}
@@ -205,7 +216,17 @@ function ElementView(props: Props & { entry: ElementEntry }) {
 
         {category.note && <p className="note">{category.note}</p>}
 
-        {entry.kind === "image" && hasFiles && <RecolourControl value={recolour} onChange={(r) => onRecolour(entry.element, r)} />}
+        {entry.kind === "image" && hasFiles && (
+          <div className="image-actions">
+            <button className="edit-image" onClick={onEdit}>
+              <svg viewBox="0 0 16 16" aria-hidden="true">
+                <path d="M11.5 1.5l3 3-8.500 8.500-3.500.500.500-3.500zM9.500 3.500l3 3" fill="none" stroke="currentColor" strokeWidth="1.300" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              Edit image
+            </button>
+            <RecolourControl value={recolour} onChange={(r) => onRecolour(entry.element, r)} />
+          </div>
+        )}
 
         <div className="inspector-section">
           <h3>Take it from</h3>

@@ -53,6 +53,18 @@ const json = (method: string, body: unknown): RequestInit => ({
 
 export const fetchState = () => request<AppState>("/api/state");
 
+/** Hands the mixer an image changed in the editor, returning the hash it can be used under. */
+export async function saveEdited(image: Blob): Promise<string> {
+  const response = await fetch("/api/edited", { method: "POST", headers: { "Content-Type": "image/png" }, body: image });
+
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? "The edited image couldn't be saved.");
+  }
+
+  return ((await response.json()) as { hash: string }).hash;
+}
+
 /** Tells the mixer where osu! keeps its data, for installs which aren't in the usual place. */
 export const setLocation = (path: string) => request<{ osuDir: string }>("/api/location", json("POST", { path }));
 

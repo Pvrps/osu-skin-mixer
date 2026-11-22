@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type EditorFile, ImageEditor } from "./components/ImageEditor";
 import { IniEditor } from "./components/IniEditor";
 import { type Hover, Inspector } from "./components/Inspector";
 import { Navigator, type Target } from "./components/Navigator";
@@ -57,6 +58,9 @@ function sanitise(saved: Partial<Selection> | null, skins: Skin[]): Selection {
     if (Object.keys(kept).length > 0) recolours[category] = kept;
   }
 
+  const isHash = (value: unknown) => typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
+  const edits = Object.fromEntries(Object.entries(saved?.edits ?? {}).filter(([original, edited]) => isHash(original) && isHash(edited)));
+
   const ini: Record<string, string> = {};
 
   for (const [path, value] of Object.entries(saved?.ini ?? {})) {
@@ -70,6 +74,7 @@ function sanitise(saved: Partial<Selection> | null, skins: Skin[]): Selection {
     overrides,
     elements,
     recolours,
+    edits,
     ini,
   };
 }
@@ -88,6 +93,8 @@ export function App() {
   const [selection, setSelection] = useState<Selection | null>(null);
   const [target, setTarget] = useState<Target>({ group: "cursor", element: null });
   const [showIni, setShowIni] = useState(false);
+  /** The element whose image is open in the editor, if any. */
+  const [editing, setEditing] = useState<Target | null>(null);
   const [hover, setHover] = useState<Hover | null>(null);
   const [status, setStatus] = useState<Status>({ kind: "idle" });
 
@@ -233,6 +240,16 @@ export function App() {
       return { ...s, recolours: Object.keys(chosen).length > 0 ? { ...recolours, [group]: chosen } : recolours };
     });
 
+  const setEdit = (original: string, edited: string | null) =>
+    update((s) => {
+      const edits = { ...s.edits };
+
+      if (edited === null) delete edits[original];
+      else edits[original] = edited;
+
+      return { ...s, edits };
+    });
+
   const setIni = (path: string, value: string | null) =>
     update((s) => {
       const ini = { ...s.ini };
@@ -298,6 +315,21 @@ export function App() {
   const entries = index.get(target.group)!;
   const entry = target.element ? (entries.get(target.element) ?? null) : null;
   const iniCount = Object.keys(selection.ini).length;
+
+  // The images which make up the element open in the editor, in the skin it is currently taken from.
+  let editorFiles: EditorFile[] = [];
+  let editorTitle = "";
+
+  if (editing?.element) {
+    const editingCategory = CATEGORY_BY_ID.get(editing.group)!;
+    const source = elementSourceFor(selection, editing.group, editing.element, skinsById);
+    const files = (source && index.get(editing.group)!.get(editing.element)?.bySkin.get(source.id)) || [];
+
+    editorTitle = labelOf(editingCategory, editing.element);
+    editorFiles = [...files]
+      .sort((a, b) => a.source.stem.localeCompare(b.source.stem, undefined, { numeric: true }) || Number(b.source.hd) - Number(a.source.hd))
+      .map((f) => ({ name: f.source.name, original: f.hash, current: selection.edits[f.hash] ?? f.hash, stem: f.source.stem, hd: f.source.hd }));
+  }
 
   let note: string | null = null;
 
@@ -400,6 +432,7 @@ export function App() {
           groupSource={sourceFor(selection, category.id, skinsById)?.id ?? selection.base}
           elementSources={selection.elements[category.id] ?? {}}
           recolours={selection.recolours[category.id] ?? {}}
+          edits={selection.edits}
           lookup={lookup}
           colourOf={colourOf}
           inherited={inherited}
@@ -408,8 +441,22 @@ export function App() {
           onChooseGroup={(skinId) => chooseGroup(category.id, skinId)}
           onChooseElement={(element, skinId) => chooseElement(category.id, element, skinId)}
           onRecolour={(element, recolour) => setRecolour(category.id, element, recolour)}
+          onEdit={() => entry && setEditing({ group: category.id, element: entry.element })}
+          onRevertEdits={(originals) => originals.forEach((original) => setEdit(original, null))}
           onHover={setHover}
           onShowGroup={() => setTarget({ group: category.id, element: null })}
+        />
+      )}
+
+      {editing && editorFiles.length > 0 && (
+        <ImageEditor
+          // A different element, or the same one taken from a different skin, is a fresh start.
+          key={`${editing.group}/${editing.element}/${editorFiles.map((f) => f.original).join()}`}
+          title={editorTitle}
+          files={editorFiles}
+          onSave={setEdit}
+          onRevert={(original) => setEdit(original, null)}
+          onClose={() => setEditing(null)}
         />
       )}
     </div>

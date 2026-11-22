@@ -20,7 +20,10 @@ public partial class GeneratedFiles
 
     private readonly string dir;
     private readonly ConcurrentDictionary<string, string> hashByKey = new();
-    private readonly ConcurrentDictionary<string, string> keyByHash = new();
+    private readonly ConcurrentDictionary<string, string> pathByHash = new();
+
+    /// <summary>Images drawn or changed by hand in the editor. Nothing describes how they were made, so they are stored by what they are.</summary>
+    private string editsDir => Path.Combine(dir, "edits");
 
     [GeneratedRegex("^[0-9a-f]{64}-[a-z]{1,16}-[0-9a-f]{6}$")]
     private static partial Regex keyRegex();
@@ -37,6 +40,16 @@ public partial class GeneratedFiles
             if (keyRegex().IsMatch(key))
                 remember(key, Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(path))));
         }
+
+        Directory.CreateDirectory(editsDir);
+
+        foreach (string path in Directory.EnumerateFiles(editsDir, "*.png"))
+        {
+            string hash = Path.GetFileNameWithoutExtension(path);
+
+            if (OsuStore.IsValidHash(hash))
+                pathByHash[hash] = path;
+        }
     }
 
     public static bool IsValidKey(string key) => keyRegex().IsMatch(key);
@@ -44,7 +57,7 @@ public partial class GeneratedFiles
     /// <summary>The hash of the image stored under a key, if there is one.</summary>
     public string? Find(string key) => hashByKey.GetValueOrDefault(key);
 
-    public string? GetPath(string hash) => keyByHash.TryGetValue(hash, out string? key) ? pathFor(key) : null;
+    public string? GetPath(string hash) => pathByHash.GetValueOrDefault(hash);
 
     public byte[]? Get(string hash) => GetPath(hash) is string path && File.Exists(path) ? File.ReadAllBytes(path) : null;
 
@@ -70,10 +83,30 @@ public partial class GeneratedFiles
         return hash;
     }
 
+    /// <summary>Keeps an image which was edited by hand, returning the hash it can be used under.</summary>
+    public string SaveEdited(byte[] data)
+    {
+        if (data.Length > max_length || !data.AsSpan().StartsWith(png_signature))
+            throw new UserFacingException("An edited image must be a PNG.");
+
+        string hash = Convert.ToHexStringLower(SHA256.HashData(data));
+        string path = Path.Combine(editsDir, hash + ".png");
+
+        if (!File.Exists(path))
+        {
+            string temp = path + ".tmp-" + Guid.NewGuid().ToString("N");
+            File.WriteAllBytes(temp, data);
+            File.Move(temp, path, overwrite: true);
+        }
+
+        pathByHash[hash] = path;
+        return hash;
+    }
+
     private void remember(string key, string hash)
     {
         hashByKey[key] = hash;
-        keyByHash[hash] = key;
+        pathByHash[hash] = pathFor(key);
     }
 
     private string pathFor(string key) => Path.Combine(dir, key + ".png");

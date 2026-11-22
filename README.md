@@ -12,7 +12,7 @@ It works with osu!lazer, the osu! (standard) game mode.
 
 1. Download the file for your system from the Releases page and run it. There is nothing to install.
 2. Type a name for your skin and choose a skin to start from.
-3. Change what you like
+3. Change what you like. **Edit image** on any element opens an editor for drawing on it, erasing parts of it and changing its colours.
 4. Click **Create skin**. Your skin now shows up in osu!'s skin list.
 5. After more changes, click **Apply**. In osu!, switch to another skin and back to see them.
 

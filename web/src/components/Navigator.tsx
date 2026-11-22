@@ -29,6 +29,8 @@ interface GroupProps {
   groupSource: string | undefined;
   elementSources: Record<string, string> | undefined;
   recolours: Record<string, Recolour> | undefined;
+  /** Images changed in the editor, by the hash of the file they were made from. */
+  edits: Record<string, string>;
   base: string;
   skinsById: Map<string, Skin>;
   lookup: RecolourLookup;
@@ -40,9 +42,19 @@ interface GroupProps {
   onToggle: (group: CategoryId) => void;
 }
 
-const Group = memo(function Group({ category, entries, groupSource, elementSources, recolours, base, skinsById, lookup, colourOf, expanded, active, onTarget, onToggle }: GroupProps) {
+const Group = memo(function Group({ category, entries, groupSource, elementSources, recolours, edits, base, skinsById, lookup, colourOf, expanded, active, onTarget, onToggle }: GroupProps) {
   const fallback = groupSource && skinsById.has(groupSource) ? groupSource : base;
-  const changed = new Set([...Object.keys(elementSources ?? {}), ...Object.keys(recolours ?? {})]).size;
+  const hasEdits = Object.keys(edits).length > 0;
+
+  // Whether any of the files an element is made of, in the skin it is taken from, has been edited by hand.
+  const isEdited = (entry: ElementEntry) => {
+    if (!hasEdits) return false;
+
+    const override = elementSources?.[entry.element];
+    return (entry.bySkin.get(override && skinsById.has(override) ? override : fallback) ?? []).some((file) => edits[file.hash] !== undefined);
+  };
+
+  const changed = new Set([...Object.keys(elementSources ?? {}), ...Object.keys(recolours ?? {}), ...entries.filter(isEdited).map((e) => e.element)]).size;
 
   return (
     <div className={`nav-group${expanded ? " expanded" : ""}`}>
@@ -75,12 +87,13 @@ const Group = memo(function Group({ category, entries, groupSource, elementSourc
 
           if (files && sourceId !== NONE_ID) {
             const shown = representative(files);
-            const recoloured = recolour && entry.kind === "image" ? lookup(shown.hash, recolour) : undefined;
+            const edited = edits[shown.hash];
+            const recoloured = recolour && entry.kind === "image" ? lookup(edited ?? shown.hash, recolour) : undefined;
 
-            url = fileUrl(recoloured ? { name: "recoloured.png", hash: recoloured } : shown.source);
+            url = fileUrl(recoloured ? { name: "recoloured.png", hash: recoloured } : edited ? { name: "edited.png", hash: edited } : shown.source);
           }
 
-          const differs = sourceId !== base || recolour !== undefined;
+          const differs = sourceId !== base || recolour !== undefined || isEdited(entry);
           const state = sourceId === NONE_ID ? (entry.kind === "audio" ? "silent" : "hidden") : !files ? (sourceId === DEFAULT_ID ? "game default" : "not in mix") : null;
 
           return (
@@ -161,6 +174,7 @@ export function Navigator({ index, selection, skinsById, lookup, colourOf, targe
                 groupSource={selection.overrides[category.id]}
                 elementSources={selection.elements[category.id]}
                 recolours={selection.recolours[category.id]}
+                edits={selection.edits}
                 base={selection.base!}
                 skinsById={skinsById}
                 lookup={lookup}

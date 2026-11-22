@@ -23,11 +23,16 @@ export interface Selection {
   elements: Partial<Record<CategoryId, Record<string, string>>>;
   /** Images given a different colour, by element. This applies whichever skin the element comes from. */
   recolours: Partial<Record<CategoryId, Record<string, Recolour>>>;
+  /**
+   * Images changed by hand in the editor: the hash of a skin's own file, to the hash of what it was turned into.
+   * An edit belongs to one particular file, so it applies wherever that file is used and nowhere else.
+   */
+  edits: Record<string, string>;
   /** Manual skin.ini values, keyed as `Section.Key`. These win over everything else. */
   ini: Record<string, string>;
 }
 
-export const EMPTY_SELECTION: Selection = { name: "", skinId: null, base: null, overrides: {}, elements: {}, recolours: {}, ini: {} };
+export const EMPTY_SELECTION: Selection = { name: "", skinId: null, base: null, overrides: {}, elements: {}, recolours: {}, edits: {}, ini: {} };
 
 export interface MixFile {
   name: string;
@@ -104,6 +109,13 @@ export function computeMix(sources: Skin[], selection: Selection, existingMix?: 
   const emit = (category: CategoryId, skin: Skin, file: EmittedFile) => {
     let { name, hash } = file;
     const recolour = selection.recolours[category]?.[file.element];
+    const edited = skin.id !== NONE_ID && IMAGE_EXTS.has(file.source.ext) ? selection.edits[hash] : undefined;
+
+    // An edited image stands in for the original, and is what any recolouring is then done to.
+    if (edited) {
+      hash = edited;
+      name = name.replace(/\.[^./\\]+$/, ".png");
+    }
 
     if (recolour && skin.id !== NONE_ID && IMAGE_EXTS.has(file.source.ext)) {
       const done = recoloured?.(hash, recolour);

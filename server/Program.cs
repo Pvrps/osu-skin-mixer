@@ -198,6 +198,14 @@ app.MapPost("/api/generated/{key}", async (string key, HttpRequest request) =>
     return Results.Ok(new { hash = generated.Save(key, body.ToArray()) });
 });
 
+// Images changed in the editor are kept by the mixer, like recoloured ones, until a mix which uses them is applied.
+app.MapPost("/api/edited", async (HttpRequest request) =>
+{
+    using var body = new MemoryStream();
+    await request.Body.CopyToAsync(body);
+    return Results.Ok(new { hash = generated.SaveEdited(body.ToArray()) });
+});
+
 // lazer falls back to its built-in classic skin for anything a legacy skin does not provide.
 // Those assets are not on disk, so they are fetched from the osu-resources repository on demand and cached.
 app.MapGet("/api/default/index", async () => await defaults.GetIndex());
