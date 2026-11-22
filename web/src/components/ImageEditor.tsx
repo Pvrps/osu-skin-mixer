@@ -53,11 +53,18 @@ const TOOLS: { id: Tool; label: string; key: string; hint: string; icon: React.R
   { id: "eraser", label: "Eraser", key: "E", hint: "Drag to rub out.", icon: <path d="M9.500 2.500l4 4-6.500 6.500h-3l-2-2zM5.500 6.500l4 4M6 14.500h8" /> },
   { id: "fill", label: "Fill", key: "G", hint: "Click an area to paint it over in one flat colour. Works on empty areas too.", icon: <path d="M7 1.500l6 6-5 5a1.400 1.400 0 01-2 0l-4-4a1.400 1.400 0 010-2zM2.500 7.500h9.500M14 10.500s1.200 1.600 1.200 2.500a1.200 1.200 0 01-2.400 0c0-.900 1.200-2.500 1.200-2.500z" /> },
   { id: "replace", label: "Replace colour", key: "R", hint: "Click a colour to turn it into yours wherever it appears, keeping its shading and soft edges.", icon: <path d="M2 5.500a3 3 0 106 0 3 3 0 10-6 0M9 11a2.500 2.500 0 105 0 2.500 2.500 0 10-5 0M10.500 3h3.500v3.500M14 3l-4.500 4.500" /> },
-  { id: "picker", label: "Pick colour", key: "I", hint: "Click to take a colour from the image. Alt-click does this with any tool.", icon: <path d="M10.500 2a2 2 0 013 3l-1.500 1.500.800.800-1 1-.800-.800-5.500 5.500-2.500.500.500-2.500 5.500-5.500-.800-.800 1-1 .800.800z" /> },
+  { id: "picker", label: "Pick colour", key: "I", hint: "Click to take a colour from the image, or use the dropper beside the colour to take one from anywhere on screen. Alt-click does this with any tool.", icon: <path d="M10.500 2a2 2 0 013 3l-1.500 1.500.800.800-1 1-.800-.800-5.500 5.500-2.500.500.500-2.500 5.500-5.500-.800-.800 1-1 .800.800z" /> },
   { id: "select", label: "Select", key: "M", hint: "Drag to mark out an area. Other tools then only work inside it.", icon: <path d="M2 2h3M7 2h2M11 2h3v3M14 7v2M14 11v3h-3M9 14H7M5 14H2v-3M2 9V7M2 5V2" /> },
   { id: "shape", label: "Shape", key: "U", hint: "Drag to draw. Hold Shift for a square, a circle or a straight angle.", icon: <path d="M2 6.500h7.500v7.500H2zM6.500 5.500a4 4 0 117.500 2" /> },
   { id: "hand", label: "Move view", key: "H", hint: "Drag to move around. Holding Space does this with any tool.", icon: <path d="M5 8V3.500a1 1 0 012 0V7M7 7V2.500a1 1 0 012 0V7M9 7V3.500a1 1 0 012 0V8M11 8V5.500a1 1 0 012 0V10a4.500 4.500 0 01-4.500 4.500A4.500 4.500 0 014.500 12L2.500 9a1 1 0 011.600-1.200L5 9" /> },
 ];
+
+/** The browser's own tool for picking a colour off the screen, where it has one. */
+interface ScreenDropper {
+  open(): Promise<{ sRGBHex: string }>;
+}
+
+const ScreenDropper = (window as unknown as { EyeDropper?: new () => ScreenDropper }).EyeDropper;
 
 type Tab = "tool" | "adjust" | "image";
 
@@ -541,6 +548,18 @@ export function ImageEditor({ title, files, recolour, onSave, onRevert, onClose 
     restore(adjustBase.current);
     settleAdjustment();
     setHistoryVersion((v) => v + 1);
+  };
+
+  /** Takes a colour from anywhere on screen: the preview, another skin's thumbnail, another window. */
+  const pickFromScreen = async () => {
+    if (!ScreenDropper) return;
+
+    try {
+      const { sRGBHex } = await new ScreenDropper().open();
+      if (/^#[0-9a-f]{6}$/i.test(sRGBHex)) setColour(sRGBHex.toLowerCase());
+    } catch {
+      // Backed out of with Escape, which is no reason to say anything.
+    }
   };
 
   const remember = (used: string) => setRecent((current) => [used, ...current.filter((c) => c !== used)].slice(0, 10));
@@ -1062,6 +1081,20 @@ export function ImageEditor({ title, files, recolour, onSave, onRevert, onClose 
                         if (!/^#[0-9a-f]{6}$/i.test(colour)) setColour("#ffffff");
                       }}
                     />
+                    {ScreenDropper && (
+                      <button className="editor-dropper" aria-label="Pick a colour from anywhere on screen" title="Pick a colour from anywhere on screen" onClick={() => void pickFromScreen()}>
+                        <svg viewBox="0 0 16 16" aria-hidden="true">
+                          <path
+                            d="M10.500 2a2 2 0 013 3l-1.500 1.500.800.800-1 1-.800-.800-5.500 5.500-2.500.500.500-2.500 5.500-5.500-.800-.800 1-1 .800.800z"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="1.200"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </button>
+                    )}
                   </div>
 
                   {recent.length > 0 && (

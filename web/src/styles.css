@@ -1772,3 +1772,18 @@ button.danger:hover:not(:disabled) {
   background: #c13a55;
   border-color: #c13a55;
 }
+
+.editor-dropper {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+}
+
+.editor-dropper svg {
+  width: 16px;
+  height: 16px;
+}
