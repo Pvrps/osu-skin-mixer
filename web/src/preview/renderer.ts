@@ -191,7 +191,6 @@ export class PreviewRenderer {
     this.ready = true;
     host.appendChild(this.app.canvas);
     this.background.anchor.set(0.5);
-    this.background.visible = false;
     this.app.stage.addChild(this.background);
     this.app.stage.addChild(this.stage);
 
@@ -257,7 +256,11 @@ export class PreviewRenderer {
     this.audio.syncMusic(this.settings.playing, this.time);
 
     const generation = ++this.backgroundGeneration;
-    this.background.visible = false;
+
+    // Without a picture of its own, a scene gets a backdrop drawn here, so skins are never judged against flat grey.
+    this.background.texture = this.backdrop();
+    this.background.visible = true;
+    this.applyBackdrop();
 
     if (media.backgroundUrl) {
       void Assets.load<Texture>({ src: media.backgroundUrl, parser: "texture" })
@@ -270,6 +273,43 @@ export class PreviewRenderer {
         })
         .catch(() => {});
     }
+  }
+
+  private fallbackBackdrop: Texture | null = null;
+
+  /** A soft, dark wash of colour, in the spirit of a beatmap background without being one. */
+  private backdrop(): Texture {
+    if (!this.fallbackBackdrop) {
+      const canvas = document.createElement("canvas");
+      canvas.width = 1280;
+      canvas.height = 720;
+
+      const context = canvas.getContext("2d")!;
+      const base = context.createLinearGradient(0, 0, canvas.width, canvas.height);
+      base.addColorStop(0, "#2a1746");
+      base.addColorStop(0.55, "#1a1838");
+      base.addColorStop(1, "#0f2238");
+      context.fillStyle = base;
+      context.fillRect(0, 0, canvas.width, canvas.height);
+
+      const glows: [x: number, y: number, radius: number, colour: string][] = [
+        [240, 160, 520, "255, 102, 171"],
+        [1040, 240, 560, "140, 102, 255"],
+        [760, 660, 520, "70, 190, 255"],
+      ];
+
+      for (const [x, y, radius, colour] of glows) {
+        const glow = context.createRadialGradient(x, y, 0, x, y, radius);
+        glow.addColorStop(0, `rgba(${colour}, 0.55)`);
+        glow.addColorStop(1, `rgba(${colour}, 0)`);
+        context.fillStyle = glow;
+        context.fillRect(0, 0, canvas.width, canvas.height);
+      }
+
+      this.fallbackBackdrop = Texture.from(canvas);
+    }
+
+    return this.fallbackBackdrop;
   }
 
   private applyBackdrop() {
