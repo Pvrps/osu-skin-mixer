@@ -10,6 +10,8 @@ export interface RawSkin {
 
 export interface AppState {
   osuDir: string;
+  /** Set when there is no osu! database where the mixer looked. */
+  missing: boolean;
   blank: { png: string; wav: string };
   skins: RawSkin[];
   selection: Partial<Selection> | null;
@@ -48,6 +50,9 @@ const json = (method: string, body: unknown): RequestInit => ({
 });
 
 export const fetchState = () => request<AppState>("/api/state");
+
+/** Tells the mixer where osu! keeps its data, for installs which aren't in the usual place. */
+export const setLocation = (path: string) => request<{ osuDir: string }>("/api/location", json("POST", { path }));
 
 export const saveSelection = (selection: Selection) => request<void>("/api/selection", json("PUT", selection));
 

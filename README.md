@@ -35,7 +35,8 @@ Before the first change of each session the mixer saves a copy of osu!'s databas
 | osu! data it looks for | `~/.local/share/osu` | `%APPDATA%\osu` |
 | The mixer's own data | `~/.local/share/osu-skin-mixer` | `%LOCALAPPDATA%\osu-skin-mixer` |
 
-A data folder moved from within osu! is followed automatically. The mixer's own data holds your current mix,
+A data folder moved from within osu! is followed automatically, and so is a Flatpak install. If osu!'s data
+isn't in any of those places, the mixer asks for the folder the first time it starts and remembers it. The mixer's own data holds your current mix,
 recoloured images, a cache of the game's built-in skin (downloaded the first time it is needed), and the
 database backups.
 

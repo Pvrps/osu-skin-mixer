@@ -22,6 +22,8 @@ public record ApplyResult(string Id, bool Created, int FileCount, string? Backup
 /// <param name="Background">The hash of the background image, if the set has it.</param>
 public record BeatmapDto(string Id, string Title, string Artist, string Difficulty, double Stars, double Length, int PreviewTime, string File, string? Audio, string? AudioName, string? Background, string? BackgroundName);
 
+public record LocationRequest(string Path);
+
 public class UserFacingException(string message) : Exception(message);
 
 /// <summary>

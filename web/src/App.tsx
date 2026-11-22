@@ -4,6 +4,7 @@ import { type Hover, Inspector } from "./components/Inspector";
 import { Navigator, type Target } from "./components/Navigator";
 import { Onboarding } from "./components/Onboarding";
 import { Preview } from "./components/Preview";
+import { Locate } from "./components/Locate";
 import { applyMix, fetchDefaultIndex, fetchState, saveSelection } from "./lib/api";
 import { CATEGORY_BY_ID, type CategoryId } from "./lib/categories";
 import { buildIndex, labelOf } from "./lib/elements";
@@ -14,6 +15,8 @@ import { type Skin, toSkin } from "./lib/skins";
 
 interface Loaded {
   osuDir: string;
+  /** Whether osu!'s data was found there at all. */
+  missing: boolean;
   blank: BlankHashes;
   /** Every skin in the game, the mix itself included once it has been written. */
   skins: Skin[];
@@ -74,7 +77,7 @@ async function load(): Promise<{ loaded: Loaded; selection: Selection }> {
   const state = await fetchState();
   const skins = state.skins.map(toSkin).sort((a, b) => a.name.localeCompare(b.name));
 
-  return { loaded: { osuDir: state.osuDir, blank: state.blank, skins }, selection: sanitise(state.selection, skins) };
+  return { loaded: { osuDir: state.osuDir, missing: state.missing, blank: state.blank, skins }, selection: sanitise(state.selection, skins) };
 }
 
 export function App() {
@@ -271,6 +274,9 @@ export function App() {
   }
 
   if (!loaded || !selection) return <div className="onboarding muted">Reading skins…</div>;
+
+  // Nothing can be done until osu! has been found, so reload from scratch once it has.
+  if (loaded.missing) return <Locate lookedIn={loaded.osuDir} onFound={() => location.reload()} />;
 
   if (!selection.base || selection.name.trim() === "") {
     return (

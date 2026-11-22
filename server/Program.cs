@@ -24,8 +24,18 @@ else if (OperatingSystem.IsMacOS())
 else
     osuHome = stateHome = Environment.GetEnvironmentVariable("XDG_DATA_HOME") is { Length: > 0 } xdg ? xdg : Path.Combine(home, ".local", "share");
 
-string osuDir = resolveOsuDir(Environment.GetEnvironmentVariable("OSU_DIR") ?? Path.Combine(osuHome, "osu"));
 string stateDir = Environment.GetEnvironmentVariable("MIXER_STATE_DIR") ?? Path.Combine(stateHome, "osu-skin-mixer");
+string locationPath = Path.Combine(stateDir, "osu-location.txt");
+
+// Where osu! keeps its data: wherever the user said, or else the first of the usual places which has a database.
+// A Flatpak install keeps its data in a sandbox of its own.
+string[] usualPlaces = [Path.Combine(osuHome, "osu"), Path.Combine(home, ".var", "app", "sh.ppy.osu", "data", "osu")];
+
+string osuDir = resolveOsuDir(
+    Environment.GetEnvironmentVariable("OSU_DIR")
+    ?? (File.Exists(locationPath) ? File.ReadAllText(locationPath).Trim() : null)
+    ?? usualPlaces.Select(resolveOsuDir).FirstOrDefault(hasDatabase)
+    ?? usualPlaces[0]);
 string? webRoot = Environment.GetEnvironmentVariable("WEB_ROOT");
 
 int port;
@@ -59,7 +69,7 @@ var app = builder.Build();
 app.UseResponseCompression();
 
 var generated = new GeneratedFiles(Path.Combine(stateDir, "generated"));
-var store = new OsuStore(osuDir, stateDir) { ExtraContent = hash => BlankFiles.Get(hash) ?? generated.Get(hash) };
+var store = createStore();
 var defaults = new DefaultSkinCache(Path.Combine(stateDir, "default-skin"));
 var contentTypes = new FileExtensionContentTypeProvider();
 var sessions = new Sessions(app.Lifetime, exitWhenClosed: open);
@@ -114,13 +124,37 @@ app.MapGet("/api/session", async (HttpContext context) =>
 app.MapGet("/api/state", () => new
 {
     osuDir,
+    // Without a database there is nothing to show yet, and the page asks where osu! is instead.
+    missing = !hasDatabase(osuDir),
     blank = new { png = BlankFiles.PngHash, wav = BlankFiles.WavHash },
-    skins = store.GetSkins(),
+    skins = hasDatabase(osuDir) ? store.GetSkins() : [],
     selection = File.Exists(selectionPath) ? JsonSerializer.Deserialize<JsonElement>(File.ReadAllText(selectionPath)) : (JsonElement?)null,
 });
 
+// For installs which aren't in one of the usual places: the user says where osu!'s data is, and it is remembered.
+app.MapPost("/api/location", (LocationRequest request) =>
+{
+    string given = request.Path.Trim().Trim('"');
+
+    if (given.StartsWith('~'))
+        given = home + given[1..];
+
+    // People point at all sorts of things: the folder itself, the database inside it, or its "files" folder.
+    string[] candidates = [given, Path.GetDirectoryName(given) ?? given];
+    string? found = candidates.Where(c => c.Length > 0).Select(resolveOsuDir).FirstOrDefault(hasDatabase);
+
+    if (found == null)
+        throw new UserFacingException($"There is no osu! database (client.realm) in {given}. In osu!, Settings > General > \"Open osu! folder\" shows the right folder.");
+
+    File.WriteAllText(locationPath, found);
+    osuDir = found;
+    store = createStore();
+
+    return Results.Ok(new { osuDir });
+});
+
 // The preview plays real beatmaps where the game has any.
-app.MapGet("/api/beatmaps", () => store.GetBeatmaps());
+app.MapGet("/api/beatmaps", () => hasDatabase(osuDir) ? store.GetBeatmaps() : []);
 
 app.MapPut("/api/selection", async (JsonElement selection) =>
 {
@@ -215,8 +249,12 @@ if (open)
 
 app.Run();
 
+OsuStore createStore() => new OsuStore(osuDir, stateDir) { ExtraContent = hash => BlankFiles.Get(hash) ?? generated.Get(hash) };
+
 string contentTypeFor(string? name) =>
     name != null && contentTypes.TryGetContentType(name, out string? type) ? type : "application/octet-stream";
+
+static bool hasDatabase(string dir) => File.Exists(Path.Combine(dir, "client.realm"));
 
 // lazer lets the data directory be relocated, in which case the default location only holds a pointer.
 static string resolveOsuDir(string dir)
