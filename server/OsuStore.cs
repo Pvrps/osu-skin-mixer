@@ -7,9 +7,12 @@ namespace OsuSkinMixer;
 
 public record SkinFileDto(string Name, string Hash);
 
-public record SkinDto(string Id, string Name, string Creator, bool IsMix, List<SkinFileDto> Files);
+/// <param name="Ini">The text of the skin's skin.ini, or null if it has none.</param>
+public record SkinDto(string Id, string Name, string Creator, List<SkinFileDto> Files, string? Ini);
 
-public record ApplyRequest(List<SkinFileDto> Files, string SkinIni);
+/// <param name="Name">What the mix skin is called in game.</param>
+/// <param name="SkinId">The skin written by an earlier apply, if there was one. It is updated in place.</param>
+public record ApplyRequest(string Name, string? SkinId, List<SkinFileDto> Files, string SkinIni);
 
 public record ApplyResult(string Id, bool Created, int FileCount, string? Backup);
 
@@ -23,9 +26,14 @@ public class UserFacingException(string message) : Exception(message);
 /// migrated or altered by this tool. Instances are opened per operation and closed straight away so the game
 /// is free to compact or migrate its database whenever it wants to.
 /// </remarks>
-public partial class OsuStore(string osuDir, string mixName, string stateDir)
+public partial class OsuStore(string osuDir, string stateDir)
 {
     private const string legacy_skin_type = "osu.Game.Skinning.LegacySkin, osu.Game";
+
+    /// <summary>Marks skins made by this tool, so one can be picked up again if the mixer's own state is lost.</summary>
+    private const string mixer_creator = "osu-skin-mixer";
+
+    private const int max_ini_length = 1024 * 1024;
 
     // Matches lazer's SkinImporter.HashableFileTypes.
     private static readonly string[] hashable_file_types = [".ini", ".json"];
@@ -40,7 +48,6 @@ public partial class OsuStore(string osuDir, string mixName, string stateDir)
     public Func<string, byte[]?> ExtraContent { get; init; } = BlankFiles.Get;
 
     public string OsuDir => osuDir;
-    public string MixName => mixName;
 
     private string realmPath => Path.Combine(osuDir, "client.realm");
     private string filesPath => Path.Combine(osuDir, "files");
@@ -85,6 +92,7 @@ public partial class OsuStore(string osuDir, string mixName, string stateDir)
             string name = d.Get<string?>("Name") ?? string.Empty;
 
             var files = new List<SkinFileDto>();
+            string? ini = null;
 
             foreach (var usage in d.GetList<IRealmObjectBase>("Files"))
             {
@@ -94,13 +102,28 @@ public partial class OsuStore(string osuDir, string mixName, string stateDir)
                 if (file == null || filename == null)
                     continue;
 
-                files.Add(new SkinFileDto(filename, file.DynamicApi.Get<string>("Hash")));
+                string hash = file.DynamicApi.Get<string>("Hash");
+                files.Add(new SkinFileDto(filename, hash));
+
+                // The configuration decides how the rest of the skin's files are read, so it is sent along.
+                if (filename.Equals("skin.ini", StringComparison.OrdinalIgnoreCase))
+                    ini = readText(hash);
             }
 
-            result.Add(new SkinDto(d.Get<Guid>("ID").ToString(), name, d.Get<string?>("Creator") ?? string.Empty, name == mixName, files));
+            result.Add(new SkinDto(d.Get<Guid>("ID").ToString(), name, d.Get<string?>("Creator") ?? string.Empty, files, ini));
         }
 
         return result.OrderBy(s => s.Name, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    private string? readText(string hash)
+    {
+        string path = GetStoragePath(hash);
+
+        if (!IsValidHash(hash) || !File.Exists(path) || new FileInfo(path).Length > max_ini_length)
+            return null;
+
+        return File.ReadAllText(path);
     }
 
     /// <summary>
@@ -108,6 +131,11 @@ public partial class OsuStore(string osuDir, string mixName, string stateDir)
     /// </summary>
     public ApplyResult Apply(ApplyRequest request)
     {
+        string mixName = request.Name?.Trim() ?? string.Empty;
+
+        if (mixName.Length is 0 or > 100)
+            throw new UserFacingException("Give the skin a name of up to 100 characters.");
+
         if (request.Files.Count == 0)
             throw new UserFacingException("Refusing to apply an empty skin.");
 
@@ -166,19 +194,38 @@ public partial class OsuStore(string osuDir, string mixName, string stateDir)
 
             realm.Write(() =>
             {
-                IRealmObjectBase? skin = realm.DynamicApi.All("Skin").Filter("Name == $0 && DeletePending == false && Protected == false", mixName).FirstOrDefault();
+                IRealmObjectBase? skin = Guid.TryParse(request.SkinId, out Guid known) ? realm.DynamicApi.Find("Skin", known) : null;
+
+                if (skin != null && (skin.DynamicApi.Get<bool>("DeletePending") || skin.DynamicApi.Get<bool>("Protected")))
+                    skin = null;
+
+                // Never write over a skin which merely shares the name. The exception is one this tool made itself,
+                // which is picked up again when there is no record of having made it.
+                foreach (var other in realm.DynamicApi.All("Skin").Filter("Name ==[c] $0 && DeletePending == false", mixName).ToList())
+                {
+                    if (skin != null && other.DynamicApi.Get<Guid>("ID") == skin.DynamicApi.Get<Guid>("ID"))
+                        continue;
+
+                    if (skin == null && !other.DynamicApi.Get<bool>("Protected") && other.DynamicApi.Get<string?>("Creator") == mixer_creator)
+                    {
+                        skin = other;
+                        continue;
+                    }
+
+                    throw new UserFacingException($"osu! already has a skin called \"{mixName}\". Choose another name.");
+                }
 
                 if (skin == null)
                 {
                     created = true;
                     skin = realm.DynamicApi.CreateObject("Skin", Guid.NewGuid());
-                    skin.DynamicApi.Set("Name", mixName);
-                    skin.DynamicApi.Set("Creator", "osu-skin-mixer");
+                    skin.DynamicApi.Set("Creator", mixer_creator);
                     skin.DynamicApi.Set("InstantiationInfo", legacy_skin_type);
                     skin.DynamicApi.Set("Protected", false);
                     skin.DynamicApi.Set("DeletePending", false);
                 }
 
+                skin.DynamicApi.Set("Name", mixName);
                 id = skin.DynamicApi.Get<Guid>("ID");
 
                 var files = skin.DynamicApi.GetList<IRealmObjectBase>("Files");

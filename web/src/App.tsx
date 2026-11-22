@@ -1,62 +1,56 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ElementGrid } from "./components/ElementGrid";
 import { IniEditor } from "./components/IniEditor";
-import { IniPanel } from "./components/IniPanel";
+import { type Hover, Inspector } from "./components/Inspector";
+import { Navigator, type Target } from "./components/Navigator";
+import { Onboarding } from "./components/Onboarding";
 import { Preview } from "./components/Preview";
 import { applyMix, fetchDefaultIndex, fetchState, saveSelection } from "./lib/api";
-import { CATEGORIES, CATEGORY_BY_ID, type CategoryId } from "./lib/categories";
-import { type RecolourLookup, type Selection, computeMix, elementSourceFor, isApplied, mixAsSkin, sourceFor } from "./lib/mix";
+import { CATEGORY_BY_ID, type CategoryId } from "./lib/categories";
+import { buildIndex, labelOf } from "./lib/elements";
+import { DEFAULT_ID, DEFAULT_SKIN, EMPTY_SELECTION, type RecolourLookup, type Selection, computeMix, elementSourceFor, isApplied, mixAsSkin, sourceFor } from "./lib/mix";
 import { type BlankHashes, NONE_ID, buildNoneSkin, canBeNone } from "./lib/none";
 import { type Recolour, generateRecolour, isRecolour, recolourKey } from "./lib/recolour";
-import { type Skin, loadSkin } from "./lib/skins";
+import { type Skin, toSkin } from "./lib/skins";
 
 interface Loaded {
-  mixName: string;
   osuDir: string;
   blank: BlankHashes;
-  sources: Skin[];
-  mix: Skin | null;
+  /** Every skin in the game, the mix itself included once it has been written. */
+  skins: Skin[];
 }
 
 type Status = { kind: "idle" } | { kind: "applying" } | { kind: "applied"; created: boolean } | { kind: "error"; message: string };
 
-/** What the lower half of the page is showing: one category's elements, or the skin.ini overrides. */
-type View = CategoryId | "ini";
+const isCategory = (id: string): id is CategoryId => CATEGORY_BY_ID.has(id as CategoryId);
 
-interface Hover {
-  skinId: string;
-  /** The single element being tried, or null when trying a skin for the whole category. */
-  element: string | null;
-}
+/** Drops anything in a saved mix which refers to a skin that no longer exists. */
+function sanitise(saved: Partial<Selection> | null, skins: Skin[]): Selection {
+  const skinId = typeof saved?.skinId === "string" && skins.some((s) => s.id === saved.skinId) ? saved.skinId : null;
+  const known = new Set(skins.filter((s) => s.id !== skinId).map((s) => s.id));
 
-const GROUPS = ["Gameplay", "HUD", "Audio", "Everything else"] as const;
-
-/** Drops anything in a saved selection which refers to a skin that no longer exists. */
-function sanitise(saved: Partial<Selection> | null, sources: Skin[]): Selection {
-  const known = new Set(sources.map((s) => s.id));
-  const usable = (category: string, skinId: unknown): skinId is string =>
-    CATEGORY_BY_ID.has(category as CategoryId) && typeof skinId === "string" && (known.has(skinId) || (skinId === NONE_ID && canBeNone(category as CategoryId)));
+  const usable = (category: string, id: unknown): id is string =>
+    isCategory(category) && typeof id === "string" && (known.has(id) || id === DEFAULT_ID || (id === NONE_ID && canBeNone(category)));
 
   const overrides: Selection["overrides"] = {};
 
-  for (const [category, skinId] of Object.entries(saved?.overrides ?? {})) {
-    if (usable(category, skinId)) overrides[category as CategoryId] = skinId;
+  for (const [category, id] of Object.entries(saved?.overrides ?? {})) {
+    if (usable(category, id)) overrides[category as CategoryId] = id;
   }
 
   const elements: Selection["elements"] = {};
 
   for (const [category, chosen] of Object.entries(saved?.elements ?? {})) {
-    const kept = Object.fromEntries(Object.entries(chosen ?? {}).filter(([, skinId]) => usable(category, skinId)));
+    const kept = Object.fromEntries(Object.entries(chosen ?? {}).filter(([, id]) => usable(category, id)));
     if (Object.keys(kept).length > 0) elements[category as CategoryId] = kept;
   }
 
   const recolours: Selection["recolours"] = {};
 
   for (const [category, chosen] of Object.entries(saved?.recolours ?? {})) {
-    if (!CATEGORY_BY_ID.has(category as CategoryId)) continue;
+    if (!isCategory(category)) continue;
 
     const kept = Object.fromEntries(Object.entries(chosen ?? {}).filter(([, recolour]) => isRecolour(recolour)));
-    if (Object.keys(kept).length > 0) recolours[category as CategoryId] = kept;
+    if (Object.keys(kept).length > 0) recolours[category] = kept;
   }
 
   const ini: Record<string, string> = {};
@@ -65,29 +59,31 @@ function sanitise(saved: Partial<Selection> | null, sources: Skin[]): Selection 
     if (typeof value === "string" && path.includes(".")) ini[path] = value;
   }
 
-  return { base: saved?.base && known.has(saved.base) ? saved.base : null, overrides, elements, recolours, ini };
+  return {
+    name: typeof saved?.name === "string" ? saved.name : "",
+    skinId,
+    base: saved?.base && known.has(saved.base) ? saved.base : null,
+    overrides,
+    elements,
+    recolours,
+    ini,
+  };
 }
 
 async function load(): Promise<{ loaded: Loaded; selection: Selection }> {
   const state = await fetchState();
-  const skins = await Promise.all(state.skins.map(loadSkin));
-  const sources = skins.filter((s) => !s.isMix).sort((a, b) => a.name.localeCompare(b.name));
+  const skins = state.skins.map(toSkin).sort((a, b) => a.name.localeCompare(b.name));
 
-  return {
-    loaded: { mixName: state.mixName, osuDir: state.osuDir, blank: state.blank, sources, mix: skins.find((s) => s.isMix) ?? null },
-    selection: sanitise(state.selection, sources),
-  };
+  return { loaded: { osuDir: state.osuDir, blank: state.blank, skins }, selection: sanitise(state.selection, skins) };
 }
-
-const countElements = (selection: Selection, category?: CategoryId) =>
-  [...Object.entries(selection.elements), ...Object.entries(selection.recolours)].reduce((total, [id, chosen]) => total + (category === undefined || category === id ? Object.keys(chosen ?? {}).length : 0), 0);
 
 export function App() {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [defaults, setDefaults] = useState<Set<string> | null>(null);
   const [selection, setSelection] = useState<Selection | null>(null);
-  const [view, setView] = useState<View>("cursor");
+  const [target, setTarget] = useState<Target>({ group: "cursor", element: null });
+  const [showIni, setShowIni] = useState(false);
   const [hover, setHover] = useState<Hover | null>(null);
   const [status, setStatus] = useState<Status>({ kind: "idle" });
 
@@ -102,7 +98,7 @@ export function App() {
     void fetchDefaultIndex().then(setDefaults);
   }, []);
 
-  // Remember the selection between visits. The first value is what was just loaded, so it is skipped.
+  // Remember the mix between visits. The first value is what was just loaded, so it is skipped.
   const lastSaved = useRef<Selection | null>(null);
 
   useEffect(() => {
@@ -121,58 +117,56 @@ export function App() {
     return () => clearTimeout(timer);
   }, [selection]);
 
-  // "None" is mixed in as a skin made of blank files. It can supply any category but can never be the base.
-  const noneSkin = useMemo(() => (loaded && defaults ? buildNoneSkin(loaded.sources, defaults, loaded.blank) : null), [loaded, defaults]);
-  const mixable = useMemo(() => (loaded ? (noneSkin ? [...loaded.sources, noneSkin] : loaded.sources) : []), [loaded, noneSkin]);
+  // The mix's own skin is what gets written to, so it is never something to take from.
+  const mixSkin = useMemo(() => loaded?.skins.find((s) => s.id === selection?.skinId) ?? null, [loaded, selection?.skinId]);
+  const sources = useMemo(() => (loaded?.skins ?? []).filter((s) => s.id !== selection?.skinId), [loaded, selection?.skinId]);
+
+  // "Nothing" is mixed in as a skin made of blank files, and "game default" as a skin with no files at all.
+  const noneSkin = useMemo(() => (loaded && defaults ? buildNoneSkin(sources, defaults, loaded.blank) : null), [loaded, sources, defaults]);
+  const mixable = useMemo(() => [...sources, DEFAULT_SKIN, ...(noneSkin ? [noneSkin] : [])], [sources, noneSkin]);
   const skinsById = useMemo(() => new Map(mixable.map((s) => [s.id, s])), [mixable]);
+  const index = useMemo(() => buildIndex(mixable), [mixable]);
 
   const colourOf = useCallback(
     (skinId: string) => {
-      if (skinId === NONE_ID) return "#8b8898";
+      if (skinId === NONE_ID || skinId === DEFAULT_ID) return "#8b8898";
 
-      const index = Math.max(0, (loaded?.sources ?? []).findIndex((s) => s.id === skinId));
-      return `hsl(${(index * 137.5 + 265) % 360} 75% 68%)`;
+      const position = Math.max(0, sources.findIndex((s) => s.id === skinId));
+      return `hsl(${(position * 137.5 + 265) % 360} 80% 70%)`;
     },
-    [loaded],
+    [sources],
   );
 
   // Recoloured images are made in the background. Until one is ready the mix shows the original in its place.
   const [recoloured, setRecoloured] = useState<Map<string, string>>(() => new Map());
   const lookup = useCallback<RecolourLookup>((hash, recolour) => recoloured.get(recolourKey(hash, recolour)), [recoloured]);
 
-  const mix = useMemo(
-    () => (loaded && selection ? computeMix(mixable, selection, loaded.mixName, loaded.mix, lookup) : null),
-    [loaded, selection, mixable, lookup],
-  );
+  const mix = useMemo(() => (selection ? computeMix(mixable, selection, mixSkin, lookup) : null), [selection, mixable, mixSkin, lookup]);
 
   // What each setting would be without manual values, shown as the placeholder in the settings panel.
-  const inherited = useMemo(
-    () => (loaded && selection ? (computeMix(mixable, { ...selection, ini: {} }, loaded.mixName, loaded.mix)?.ini ?? []) : []),
-    [loaded, selection, mixable],
-  );
+  const inherited = useMemo(() => (selection ? (computeMix(mixable, { ...selection, ini: {} }, mixSkin)?.ini ?? []) : []), [selection, mixable, mixSkin]);
 
-  // The selection as it would be if whatever is being hovered were clicked, or null if that changes nothing.
+  // The mix as it would be if whatever is being hovered were clicked, or null if that changes nothing.
   const trial = useMemo((): Selection | null => {
-    if (!selection || !hover || view === "ini") return null;
+    if (!selection || !hover || showIni) return null;
+
+    const group = target.group;
 
     if (hover.element === null) {
-      if (hover.skinId === sourceFor(selection, view, skinsById)?.id && Object.keys(selection.elements[view] ?? {}).length === 0) return null;
+      if (hover.skinId === sourceFor(selection, group, skinsById)?.id && Object.keys(selection.elements[group] ?? {}).length === 0) return null;
 
-      const { [view]: _, ...elements } = selection.elements;
-      return { ...selection, overrides: { ...selection.overrides, [view]: hover.skinId }, elements };
+      const { [group]: _, ...elements } = selection.elements;
+      return { ...selection, overrides: { ...selection.overrides, [group]: hover.skinId }, elements };
     }
 
-    if (hover.skinId === elementSourceFor(selection, view, hover.element, skinsById)?.id) return null;
+    if (hover.skinId === elementSourceFor(selection, group, hover.element, skinsById)?.id) return null;
 
-    return { ...selection, elements: { ...selection.elements, [view]: { ...selection.elements[view], [hover.element]: hover.skinId } } };
-  }, [selection, hover, view, skinsById]);
+    return { ...selection, elements: { ...selection.elements, [group]: { ...selection.elements[group], [hover.element]: hover.skinId } } };
+  }, [selection, hover, target.group, showIni, skinsById]);
 
   // Hovering shows what the mix would look like, without committing to anything.
-  const shown = useMemo(
-    () => (loaded && trial ? computeMix(mixable, trial, loaded.mixName, loaded.mix, lookup) : mix),
-    [loaded, trial, mix, mixable, lookup],
-  );
-  const previewSkin = useMemo(() => (loaded && shown ? mixAsSkin(shown, loaded.mixName) : null), [loaded, shown]);
+  const shown = useMemo(() => (trial ? computeMix(mixable, trial, mixSkin, lookup) : mix), [trial, mix, mixable, mixSkin, lookup]);
+  const previewSkin = useMemo(() => (shown && selection ? mixAsSkin(shown, selection.name) : null), [shown, selection?.name]);
 
   const requested = useRef(new Set<string>());
 
@@ -190,56 +184,49 @@ export function App() {
 
   const recolouring = (mix?.pending.length ?? 0) > 0;
 
-  // Until the list of built-in elements has arrived, a "none" in the selection can't be resolved, so hold off judging.
+  // Until the list of built-in elements has arrived, a "nothing" in the mix can't be resolved, so hold off judging.
   const usesNone =
     selection !== null && (Object.values(selection.overrides).includes(NONE_ID) || Object.values(selection.elements).some((chosen) => Object.values(chosen ?? {}).includes(NONE_ID)));
-  const dirty = mix !== null && !recolouring && (!usesNone || noneSkin !== null) && !isApplied(mix, loaded?.mix);
+  const dirty = mix !== null && !recolouring && (!usesNone || noneSkin !== null) && !isApplied(mix, mixSkin);
 
-  const update = (change: (s: Selection) => Selection) => {
+  const update = useCallback((change: (s: Selection) => Selection) => {
     setSelection((s) => (s ? change(s) : s));
     setStatus((s) => (s.kind === "applying" ? s : { kind: "idle" }));
-  };
+  }, []);
 
-  /** Uses one skin for a whole category, dropping any element-by-element choices made within it. */
-  const chooseCategory = (categoryId: CategoryId, skinId: string) =>
+  /** Uses one skin for a whole group, dropping any element-by-element choices made within it. */
+  const chooseGroup = (group: CategoryId, skinId: string) =>
     update((s) => {
       const overrides = { ...s.overrides };
-      const { [categoryId]: _, ...elements } = s.elements;
+      const { [group]: _, ...elements } = s.elements;
 
-      if (skinId === s.base) delete overrides[categoryId];
-      else overrides[categoryId] = skinId;
+      if (skinId === s.base) delete overrides[group];
+      else overrides[group] = skinId;
 
       return { ...s, overrides, elements };
     });
 
-  const chooseElement = (categoryId: CategoryId, element: string, skinId: string) =>
+  const chooseElement = (group: CategoryId, element: string, skinId: string) =>
     update((s) => {
-      const chosen = { ...s.elements[categoryId] };
+      const chosen = { ...s.elements[group] };
 
-      // Picking the category's own skin just means the element is no longer an exception.
-      if (skinId === sourceFor(s, categoryId, skinsById)?.id) delete chosen[element];
+      // Picking the group's own skin just means the element is no longer an exception.
+      if (skinId === (s.overrides[group] ?? s.base)) delete chosen[element];
       else chosen[element] = skinId;
 
-      const { [categoryId]: _, ...elements } = s.elements;
-      return { ...s, elements: Object.keys(chosen).length > 0 ? { ...elements, [categoryId]: chosen } : elements };
+      const { [group]: _, ...elements } = s.elements;
+      return { ...s, elements: Object.keys(chosen).length > 0 ? { ...elements, [group]: chosen } : elements };
     });
 
-  const setRecolour = (categoryId: CategoryId, element: string, recolour: Recolour | null) =>
+  const setRecolour = (group: CategoryId, element: string, recolour: Recolour | null) =>
     update((s) => {
-      const chosen = { ...s.recolours[categoryId] };
+      const chosen = { ...s.recolours[group] };
 
       if (recolour) chosen[element] = recolour;
       else delete chosen[element];
 
-      const { [categoryId]: _, ...recolours } = s.recolours;
-      return { ...s, recolours: Object.keys(chosen).length > 0 ? { ...recolours, [categoryId]: chosen } : recolours };
-    });
-
-  const setBase = (skinId: string) =>
-    update((s) => {
-      // An override pointing at the new base is no longer an override.
-      const overrides = Object.fromEntries(Object.entries(s.overrides).filter(([, id]) => id !== skinId));
-      return { ...s, base: skinId, overrides };
+      const { [group]: _, ...recolours } = s.recolours;
+      return { ...s, recolours: Object.keys(chosen).length > 0 ? { ...recolours, [group]: chosen } : recolours };
     });
 
   const setIni = (path: string, value: string | null) =>
@@ -258,11 +245,13 @@ export function App() {
     setStatus({ kind: "applying" });
 
     try {
-      const result = await applyMix(mix.files, mix.iniText);
-      await saveSelection(selection);
+      const result = await applyMix(selection.name, selection.skinId, mix.files, mix.iniText);
+      const applied = { ...selection, skinId: result.id };
+      await saveSelection(applied);
 
       const fresh = await load();
       setLoaded(fresh.loaded);
+      setSelection((s) => (s ? { ...s, skinId: result.id } : s));
       setStatus({ kind: "applied", created: result.created });
     } catch (e) {
       setStatus({ kind: "error", message: (e as Error).message });
@@ -271,187 +260,151 @@ export function App() {
 
   if (loadError) {
     return (
-      <div className="splash">
-        <h1>Couldn't read your osu! skins</h1>
-        <p>{loadError}</p>
-        <button onClick={() => location.reload()}>Try again</button>
-      </div>
-    );
-  }
-
-  if (!loaded || !selection) return <div className="splash">Reading skins…</div>;
-
-  if (loaded.sources.length === 0) {
-    return (
-      <div className="splash">
-        <h1>No skins to mix</h1>
-        <p>
-          No legacy skins were found in <code>{loaded.osuDir}</code>. Import some into osu! and reload this page.
-        </p>
-      </div>
-    );
-  }
-
-  if (!selection.base) {
-    return (
-      <div className="splash">
-        <h1>Choose a base skin</h1>
-        <p>
-          "{loaded.mixName}" starts out as a copy of this skin. You can then swap individual parts for those of any other skin, and change the
-          base again later.
-        </p>
-        <div className="base-choices">
-          {loaded.sources.map((skin) => (
-            <button key={skin.id} onClick={() => setBase(skin.id)} style={{ "--skin": colourOf(skin.id) } as React.CSSProperties}>
-              <span className="dot" />
-              {skin.name}
-              <small>{skin.files.length} files</small>
-            </button>
-          ))}
+      <div className="onboarding">
+        <div className="onboarding-card">
+          <h1>Couldn't read your osu! skins</h1>
+          <p className="muted">{loadError}</p>
+          <button onClick={() => location.reload()}>Try again</button>
         </div>
       </div>
     );
   }
 
-  const current = view === "ini" ? null : CATEGORY_BY_ID.get(view)!;
+  if (!loaded || !selection) return <div className="onboarding muted">Reading skins…</div>;
+
+  if (!selection.base || selection.name.trim() === "") {
+    return (
+      <Onboarding
+        skins={loaded.skins}
+        index={index}
+        osuDir={loaded.osuDir}
+        onCreate={(name, base, adoptId) => {
+          setSelection({ ...EMPTY_SELECTION, name, base, skinId: adoptId });
+          setTarget({ group: "cursor", element: null });
+          setStatus({ kind: "idle" });
+        }}
+      />
+    );
+  }
+
+  const category = CATEGORY_BY_ID.get(target.group)!;
+  const entries = index.get(target.group)!;
+  const entry = target.element ? (entries.get(target.element) ?? null) : null;
   const iniCount = Object.keys(selection.ini).length;
-  const changeCount = Object.keys(selection.overrides).length + countElements(selection) + iniCount;
 
   let note: string | null = null;
 
-  if (trial && hover && current) {
-    const name = skinsById.get(hover.skinId)?.name;
-    const what = hover.element === null ? current.label.toLowerCase() : current.font ? `${current.label.toLowerCase()} "${hover.element.split("-").pop()}"` : hover.element;
+  if (trial && hover) {
+    const what = hover.element === null ? category.label.toLowerCase() : labelOf(category, hover.element);
 
-    note = hover.skinId === NONE_ID ? `Trying without ${what}` : `Trying ${what} from ${name}`;
+    if (hover.skinId === NONE_ID) note = `Trying without ${what}`;
+    else if (hover.skinId === DEFAULT_ID) note = `Trying the game's own ${what}`;
+    else note = `Trying ${what} from ${skinsById.get(hover.skinId)?.name}`;
   }
 
   return (
-    <div className="app">
-      <header>
-        <h1>osu! skin mixer</h1>
+    <div className={`app${showIni ? " with-ini" : ""}`}>
+      <header className="topbar">
+        <div className="brand">osu! skin mixer</div>
 
-        <label className="base">
-          Base skin
-          <select value={selection.base} onChange={(e) => setBase(e.target.value)}>
-            {loaded.sources.map((skin) => (
-              <option key={skin.id} value={skin.id}>
-                {skin.name}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <button className="quiet" disabled={changeCount === 0} onClick={() => update((s) => ({ ...s, overrides: {}, elements: {}, recolours: {}, ini: {} }))}>
-          Reset to base
-        </button>
+        <input
+          className="mix-name"
+          type="text"
+          aria-label="Skin name"
+          title="What the skin is called in osu!"
+          spellCheck={false}
+          maxLength={100}
+          value={selection.name}
+          onChange={(e) => update((s) => ({ ...s, name: e.target.value }))}
+          onBlur={(e) => {
+            // The name can't be left empty, so fall back to something rather than throwing the user back to the start.
+            if (e.target.value.trim() === "") update((s) => ({ ...s, name: "My mix" }));
+          }}
+        />
 
         <div className="spacer" />
 
-        <div className={`status ${status.kind}`}>
+        <div className={`status ${status.kind}`} role="status">
           {status.kind === "error" && `Couldn't apply: ${status.message}`}
           {status.kind === "applying" && "Applying…"}
-          {status.kind === "applied" && !dirty && (
-            <>
-              {status.created ? `Created "${loaded.mixName}".` : `Updated "${loaded.mixName}".`} In osu!, switch to another skin and back to see it.
-            </>
-          )}
+          {status.kind === "applied" && !dirty && !recolouring && <>{status.created ? "Created." : "Updated."} In osu!, switch to another skin and back to see it.</>}
           {(status.kind === "idle" || (status.kind === "applied" && (dirty || recolouring))) &&
-            (recolouring ? "Recolouring…" : dirty ? (loaded.mix ? "Changes not applied yet" : `"${loaded.mixName}" will be created`) : `"${loaded.mixName}" is up to date`)}
+            (recolouring ? "Recolouring…" : dirty ? (mixSkin ? "Changes not applied yet" : "Not in osu! yet") : "Up to date in osu!")}
         </div>
 
+        <button className={showIni ? "on" : ""} aria-pressed={showIni} onClick={() => setShowIni((v) => !v)}>
+          skin.ini{iniCount > 0 ? ` (${iniCount})` : ""}
+        </button>
+
+        <button
+          className="quiet"
+          title="Set this mix aside and begin a new one"
+          onClick={() => {
+            if (window.confirm(`Start a new mix? "${selection.name}" stays in osu! as it was last applied, but can no longer be edited here.`)) {
+              update(() => EMPTY_SELECTION);
+              setShowIni(false);
+            }
+          }}
+        >
+          New mix
+        </button>
+
         <button className="primary" disabled={!dirty || status.kind === "applying"} onClick={() => void apply()}>
-          {loaded.mix ? "Apply to skin" : "Create skin"}
+          {mixSkin ? "Apply" : "Create skin"}
         </button>
       </header>
 
-      <nav>
-        {GROUPS.map((group) => (
-          <section key={group}>
-            <h2>{group}</h2>
-            {CATEGORIES.filter((c) => c.group === group).map((c) => {
-              const source = sourceFor(selection, c.id, skinsById);
-              const overridden = selection.overrides[c.id] !== undefined;
-              const exceptions = countElements(selection, c.id);
+      <Navigator
+        index={index}
+        selection={selection}
+        skinsById={skinsById}
+        lookup={lookup}
+        colourOf={colourOf}
+        target={showIni ? null : target}
+        onTarget={(next) => {
+          setTarget(next);
+          setShowIni(false);
+          setHover(null);
+        }}
+      />
 
-              return (
-                <button
-                  key={c.id}
-                  className={`category${c.id === view ? " active" : ""}`}
-                  style={{ "--skin": source ? colourOf(source.id) : "transparent" } as React.CSSProperties}
-                  onClick={() => {
-                    setView(c.id);
-                    setHover(null);
-                  }}
-                >
-                  <span className="category-label">{c.label}</span>
-                  <span className={`category-source${overridden ? " overridden" : ""}`}>
-                    <span className="dot" />
-                    <span className="category-source-name">{source?.name}</span>
-                    {exceptions > 0 && <span className="mixed">+{exceptions} changed</span>}
-                  </span>
-                </button>
-              );
-            })}
-          </section>
-        ))}
-
-        <section>
-          <h2>Configuration</h2>
-          <button
-            className={`category${view === "ini" ? " active" : ""}`}
-            onClick={() => {
-              setView("ini");
-              setHover(null);
-            }}
-          >
-            <span className="category-label">skin.ini overrides</span>
-            <span className="category-source">{iniCount === 0 ? "None set" : `${iniCount} value${iniCount === 1 ? "" : "s"} set`}</span>
-          </button>
-        </section>
-      </nav>
-
-      <main>
+      <main className="stage">
         <Preview skin={previewSkin} defaults={defaults} note={note} />
-
-        {current ? (
-          <div className="browser">
-            <div className="browser-head">
-              <h2>{current.label}</h2>
-              <span className="muted">
-                {current.hint}. Click a skin's name to use it for all of these, or a single cell to take just that element. Hover to try. The colour dot
-                beside an image recolours it.
-              </span>
-            </div>
-            <div className="browser-body">
-              <ElementGrid
-                key={current.id}
-                category={current}
-                skins={loaded.sources}
-                none={canBeNone(current.id) ? noneSkin : null}
-                categorySource={sourceFor(selection, current.id, skinsById)?.id ?? null}
-                elementSources={selection.elements[current.id] ?? {}}
-                recolours={selection.recolours[current.id] ?? {}}
-                base={selection.base}
-                colourOf={colourOf}
-                onSelectCategory={(skinId) => chooseCategory(current.id, skinId)}
-                onSelectElement={(element, skinId) => chooseElement(current.id, element, skinId)}
-                onRecolour={(element, recolour) => setRecolour(current.id, element, recolour)}
-                onHover={setHover}
-              />
-              <IniPanel category={current} inherited={inherited} overrides={selection.ini} onChange={setIni} />
-            </div>
-          </div>
-        ) : (
-          <div className="browser">
-            <div className="browser-head">
-              <h2>skin.ini overrides</h2>
-              <span className="muted">Set any skin.ini value yourself, whatever the skins you picked say.</span>
-            </div>
-            <IniEditor result={mix?.ini ?? []} inherited={inherited} overrides={selection.ini} onChange={setIni} />
-          </div>
-        )}
       </main>
+
+      {showIni ? (
+        <aside className="inspector">
+          <header className="inspector-head">
+            <h2>skin.ini</h2>
+            <p className="muted">Set any value yourself, whatever the skins you picked say.</p>
+          </header>
+          <IniEditor result={mix?.ini ?? []} inherited={inherited} overrides={selection.ini} onChange={setIni} />
+        </aside>
+      ) : (
+        <Inspector
+          category={category}
+          entries={entries}
+          entry={entry}
+          sources={sources}
+          skinsById={skinsById}
+          defaults={defaults}
+          allowNone={canBeNone(category.id) && noneSkin !== null}
+          base={selection.base}
+          groupSource={sourceFor(selection, category.id, skinsById)?.id ?? selection.base}
+          elementSources={selection.elements[category.id] ?? {}}
+          recolours={selection.recolours[category.id] ?? {}}
+          lookup={lookup}
+          colourOf={colourOf}
+          inherited={inherited}
+          iniOverrides={selection.ini}
+          onIni={setIni}
+          onChooseGroup={(skinId) => chooseGroup(category.id, skinId)}
+          onChooseElement={(element, skinId) => chooseElement(category.id, element, skinId)}
+          onRecolour={(element, recolour) => setRecolour(category.id, element, recolour)}
+          onHover={setHover}
+          onShowGroup={() => setTarget({ group: category.id, element: null })}
+        />
+      )}
     </div>
   );
 }

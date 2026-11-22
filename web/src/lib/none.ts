@@ -10,7 +10,7 @@ export interface BlankHashes {
   wav: string;
 }
 
-// Blanking the interface would leave menus unusable, and combo colours have no files to blank.
+// Combo colours have no files to blank, and the leftover files are of kinds a blank can't stand in for.
 const EXCLUDED = new Set<CategoryId>(["other", "colours"]);
 
 export const canBeNone = (category: CategoryId) => !EXCLUDED.has(category);
@@ -26,7 +26,6 @@ export function buildNoneSkin(sources: Skin[], defaultNames: Set<string>, blank:
     id: "built-in",
     name: "",
     creator: "",
-    isMix: false,
     files: [...defaultNames].map((name) => describeFile(name, "")),
     ini: [],
   };
@@ -54,7 +53,6 @@ export function buildNoneSkin(sources: Skin[], defaultNames: Set<string>, blank:
     id: NONE_ID,
     name: "None",
     creator: "",
-    isMix: false,
     files: [...names].map(([name, hash]) => describeFile(name, hash)),
     ini: [],
   };

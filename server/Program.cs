@@ -7,7 +7,6 @@ string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 string dataHome = Environment.GetEnvironmentVariable("XDG_DATA_HOME") is { Length: > 0 } xdg ? xdg : Path.Combine(home, ".local", "share");
 
 string osuDir = resolveOsuDir(Environment.GetEnvironmentVariable("OSU_DIR") ?? Path.Combine(dataHome, "osu"));
-string mixName = Environment.GetEnvironmentVariable("MIX_SKIN_NAME") is { Length: > 0 } n ? n : "purps - mix";
 string stateDir = Environment.GetEnvironmentVariable("MIXER_STATE_DIR") ?? Path.Combine(dataHome, "osu-skin-mixer");
 string port = Environment.GetEnvironmentVariable("PORT") ?? "5727";
 string webRoot = Environment.GetEnvironmentVariable("WEB_ROOT") ?? Path.Combine(AppContext.BaseDirectory, "wwwroot");
@@ -17,12 +16,14 @@ Directory.CreateDirectory(stateDir);
 var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.UseUrls($"http://127.0.0.1:{port}");
 builder.Logging.SetMinimumLevel(LogLevel.Warning);
+builder.Services.AddResponseCompression();
 builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase);
 
 var app = builder.Build();
+app.UseResponseCompression();
 
 var generated = new GeneratedFiles(Path.Combine(stateDir, "generated"));
-var store = new OsuStore(osuDir, mixName, stateDir) { ExtraContent = hash => BlankFiles.Get(hash) ?? generated.Get(hash) };
+var store = new OsuStore(osuDir, stateDir) { ExtraContent = hash => BlankFiles.Get(hash) ?? generated.Get(hash) };
 var defaults = new DefaultSkinCache(Path.Combine(stateDir, "default-skin"));
 var contentTypes = new FileExtensionContentTypeProvider();
 string selectionPath = Path.Combine(stateDir, "selection.json");
@@ -48,7 +49,6 @@ app.Use(async (context, next) =>
 
 app.MapGet("/api/state", () => new
 {
-    mixName,
     osuDir,
     blank = new { png = BlankFiles.PngHash, wav = BlankFiles.WavHash },
     skins = store.GetSkins(),
@@ -126,7 +126,6 @@ if (Directory.Exists(webRoot))
 }
 
 Console.WriteLine($"osu! data:  {osuDir}");
-Console.WriteLine($"mix skin:   {mixName}");
 Console.WriteLine($"listening:  http://127.0.0.1:{port}");
 
 app.Run();

@@ -4,12 +4,11 @@ export interface RawSkin {
   id: string;
   name: string;
   creator: string;
-  isMix: boolean;
   files: { name: string; hash: string }[];
+  ini: string | null;
 }
 
 export interface AppState {
-  mixName: string;
   osuDir: string;
   blank: { png: string; wav: string };
   skins: RawSkin[];
@@ -52,8 +51,8 @@ export const fetchState = () => request<AppState>("/api/state");
 
 export const saveSelection = (selection: Selection) => request<void>("/api/selection", json("PUT", selection));
 
-export const applyMix = (files: { name: string; hash: string }[], skinIni: string) =>
-  request<ApplyResult>("/api/apply", json("POST", { files, skinIni }));
+export const applyMix = (name: string, skinId: string | null, files: { name: string; hash: string }[], skinIni: string) =>
+  request<ApplyResult>("/api/apply", json("POST", { name, skinId, files, skinIni }));
 
 /** Names of the classic skin's files. Empty when they cannot be fetched, in which case the preview goes without. */
 export const fetchDefaultIndex = () =>

@@ -16,7 +16,6 @@ export interface Skin {
   id: string;
   name: string;
   creator: string;
-  isMix: boolean;
   files: SkinFile[];
   ini: IniSection[];
 }
@@ -44,23 +43,9 @@ export function findIni(files: SkinFile[]): SkinFile | undefined {
   return files.find((f) => f.root && f.stem === "skin" && f.ext === "ini");
 }
 
-export async function loadSkin(raw: {
-  id: string;
-  name: string;
-  creator: string;
-  isMix: boolean;
-  files: { name: string; hash: string }[];
-}): Promise<Skin> {
-  const files = raw.files.map((f) => describeFile(f.name, f.hash));
-  const iniFile = findIni(files);
-  let ini: IniSection[] = [];
-
-  if (iniFile) {
-    const response = await fetch(fileUrl(iniFile));
-    if (response.ok) ini = parseIni(await response.text());
-  }
-
-  return { id: raw.id, name: raw.name, creator: raw.creator, isMix: raw.isMix, files, ini };
+/** Turns a skin as the server describes it into one whose files and configuration are ready to be looked through. */
+export function toSkin(raw: { id: string; name: string; creator: string; files: { name: string; hash: string }[]; ini: string | null }): Skin {
+  return { id: raw.id, name: raw.name, creator: raw.creator, files: raw.files.map((f) => describeFile(f.name, f.hash)), ini: parseIni(raw.ini ?? "") };
 }
 
 /** Normalises a font prefix from skin.ini the way lazer's lookups end up treating it. */

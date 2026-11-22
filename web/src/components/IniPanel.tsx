@@ -15,14 +15,10 @@ interface Field {
   colour: boolean;
 }
 
-// Settings which belong to no single element follow the "everything else" skin, and are worth exposing there.
+// Settings which belong to no single element stay as the mix started, and can be changed from the last group.
 const OTHER_FIELDS: Field[] = [
   { section: "General", key: "Version", colour: false },
   { section: "General", key: "AnimationFramerate", colour: false },
-  { section: "General", key: "ComboBurstRandom", colour: false },
-  { section: "Colours", key: "MenuGlow", colour: true },
-  { section: "Colours", key: "SongSelectActiveText", colour: true },
-  { section: "Colours", key: "SongSelectInactiveText", colour: true },
 ];
 
 function fieldsFor(category: CategoryDef): Field[] {
@@ -48,19 +44,12 @@ const fromHex = (hex: string) => [1, 3, 5].map((i) => Number.parseInt(hex.slice(
 export function IniPanel({ category, inherited, overrides, onChange }: Props) {
   const fields = fieldsFor(category);
 
-  if (fields.length === 0) {
-    return (
-      <div className="ini">
-        <h3>Settings</h3>
-        <p className="muted">This category has no skin.ini settings.</p>
-      </div>
-    );
-  }
+  if (fields.length === 0) return null;
 
   return (
     <div className="ini">
       <h3>Settings</h3>
-      <p className="muted">Taken from the chosen skin. Type a value to override it.</p>
+      <p className="muted">These come from the skin chosen above. Type a value to set your own.</p>
 
       {fields.map((field) => {
         const path = `${field.section}.${field.key}`;

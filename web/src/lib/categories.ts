@@ -1,21 +1,8 @@
 import { AUDIO_EXTS, IMAGE_EXTS, type Skin, type SkinFile, fontPrefix } from "./skins";
 
-export type CategoryId =
-  | "cursor"
-  | "hitcircle"
-  | "numbers"
-  | "colours"
-  | "slider"
-  | "spinner"
-  | "judgement"
-  | "followpoint"
-  | "healthbar"
-  | "scorefont"
-  | "combofont"
-  | "hud"
-  | "hitsounds"
-  | "uisounds"
-  | "other";
+export const SECTIONS = ["Gameplay", "In-game interface", "Screens", "Sounds", "Other game modes", "Everything else"] as const;
+
+export type Section = (typeof SECTIONS)[number];
 
 export interface FontSpec {
   prefixKey: string;
@@ -26,28 +13,35 @@ export interface FontSpec {
   glyphs: string[];
 }
 
-export interface CategoryDef {
-  id: CategoryId;
+interface Def<Id extends string> {
+  id: Id;
   label: string;
-  group: "Gameplay" | "HUD" | "Audio" | "Everything else";
+  section: Section;
   hint: string;
-  /** Matches the stem of top-level image files belonging to this category. */
+  /** Matches the stem of top-level image files belonging to this group. */
   pattern?: RegExp;
-  /** Matches the stem of top-level audio files belonging to this category. */
+  /** Matches the stem of top-level audio files belonging to this group. */
   audioPattern?: RegExp;
   font?: FontSpec;
-  /** The skin.ini keys which travel with this category, by section. */
+  /** The skin.ini keys which travel with this group, by section. */
   ini: { General?: string[]; Colours?: string[]; Fonts?: string[] };
 }
 
 const DIGITS = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
 const SCORE_GLYPHS = [...DIGITS, "comma", "dot", "percent", "x"];
+const SAMPLE_SET = "(normal|soft|drum)";
 
-export const CATEGORIES: CategoryDef[] = [
+const define = <const Id extends string>(defs: Def<Id>[]) => defs;
+
+/**
+ * Every element of a skin belongs to exactly one of these groups, named for where it shows up in the game.
+ * A file is given to the first group whose pattern matches it, so the order matters where patterns overlap.
+ */
+export const CATEGORIES = define([
   {
     id: "cursor",
     label: "Cursor",
-    group: "Gameplay",
+    section: "Gameplay",
     hint: "Cursor, trail and smoke",
     pattern: /^(cursor|cursormiddle|cursortrail|cursor-smoke|cursor-ripple)$/,
     ini: { General: ["CursorRotate", "CursorExpand", "CursorCentre", "CursorTrailRotate"] },
@@ -55,7 +49,7 @@ export const CATEGORIES: CategoryDef[] = [
   {
     id: "hitcircle",
     label: "Hit circles",
-    group: "Gameplay",
+    section: "Gameplay",
     hint: "Circle, overlay and approach circle",
     pattern: /^(hitcircle|hitcircleoverlay(-\d+)?|hitcircleselect|approachcircle)$/,
     ini: { General: ["HitCircleOverlayAboveNumber", "HitCircleOverlayAboveNumer"] },
@@ -63,29 +57,23 @@ export const CATEGORIES: CategoryDef[] = [
   {
     id: "numbers",
     label: "Circle numbers",
-    group: "Gameplay",
-    hint: "Combo numbers inside circles",
-    font: {
-      prefixKey: "HitCirclePrefix",
-      overlapKey: "HitCircleOverlap",
-      defaultPrefix: "default",
-      outPrefix: "mixfonts/hitcircle",
-      glyphs: DIGITS,
-    },
+    section: "Gameplay",
+    hint: "The combo numbers inside circles",
+    font: { prefixKey: "HitCirclePrefix", overlapKey: "HitCircleOverlap", defaultPrefix: "default", outPrefix: "mixfonts/hitcircle", glyphs: DIGITS },
     ini: {},
   },
   {
     id: "colours",
     label: "Combo colours",
-    group: "Gameplay",
-    hint: "Combo1–Combo8 from skin.ini",
+    section: "Gameplay",
+    hint: "Combo1 to Combo8 from skin.ini",
     ini: { Colours: ["Combo1", "Combo2", "Combo3", "Combo4", "Combo5", "Combo6", "Combo7", "Combo8"] },
   },
   {
     id: "slider",
     label: "Sliders",
-    group: "Gameplay",
-    hint: "Ball, follow circle, ticks, arrow and track colours",
+    section: "Gameplay",
+    hint: "Ball, follow circle, ticks, reverse arrow and track colours",
     pattern:
       /^(sliderb\d*|sliderb-nd|sliderb-spec|sliderfollowcircle(-\d+)?|sliderscorepoint|reversearrow|sliderstartcircle|sliderstartcircleoverlay(-\d+)?|sliderendcircle|sliderendcircleoverlay(-\d+)?|sliderpoint10|sliderpoint30)$/,
     ini: {
@@ -96,8 +84,8 @@ export const CATEGORIES: CategoryDef[] = [
   {
     id: "spinner",
     label: "Spinner",
-    group: "Gameplay",
-    hint: "All spinner-* elements",
+    section: "Gameplay",
+    hint: "Everything a spinner is drawn with",
     pattern: /^spinner-.+$/,
     ini: {
       General: ["SpinnerFadePlayfield", "SpinnerNoBlink", "SpinnerFrequencyModulate"],
@@ -107,90 +95,192 @@ export const CATEGORIES: CategoryDef[] = [
   {
     id: "judgement",
     label: "Hit bursts",
-    group: "Gameplay",
-    hint: "300 / 100 / 50 / miss, particles and lighting",
+    section: "Gameplay",
+    hint: "300, 100, 50 and miss, with their particles and lighting",
     pattern: /^(hit(0|50|100|100k|300|300k|300g)(-\d+)?|particle(50|100|300)|lighting|sliderendmiss|slidertickmiss)$/,
     ini: {},
   },
   {
     id: "followpoint",
     label: "Follow points",
-    group: "Gameplay",
+    section: "Gameplay",
     hint: "The trail between objects",
     pattern: /^followpoint(-\d+)?$/,
     ini: {},
   },
   {
+    id: "comboburst",
+    label: "Combo bursts",
+    section: "Gameplay",
+    hint: "The character which pops up at combo milestones",
+    pattern: /^comboburst(-\d+)?$/,
+    ini: { General: ["ComboBurstRandom"] },
+  },
+  {
     id: "healthbar",
     label: "Health bar",
-    group: "HUD",
-    hint: "All scorebar-* elements",
+    section: "In-game interface",
+    hint: "Background, fill and markers",
     pattern: /^scorebar-.+$/,
     ini: {},
   },
   {
     id: "scorefont",
-    label: "Score font",
-    group: "HUD",
+    label: "Score numbers",
+    section: "In-game interface",
     hint: "Score and accuracy digits",
-    font: {
-      prefixKey: "ScorePrefix",
-      overlapKey: "ScoreOverlap",
-      defaultPrefix: "score",
-      outPrefix: "mixfonts/score",
-      glyphs: SCORE_GLYPHS,
-    },
+    font: { prefixKey: "ScorePrefix", overlapKey: "ScoreOverlap", defaultPrefix: "score", outPrefix: "mixfonts/score", glyphs: SCORE_GLYPHS },
     ini: {},
   },
   {
     id: "combofont",
-    label: "Combo font",
-    group: "HUD",
+    label: "Combo numbers",
+    section: "In-game interface",
     hint: "Combo counter digits",
-    font: {
-      prefixKey: "ComboPrefix",
-      overlapKey: "ComboOverlap",
-      defaultPrefix: "score",
-      outPrefix: "mixfonts/combo",
-      glyphs: SCORE_GLYPHS,
-    },
+    font: { prefixKey: "ComboPrefix", overlapKey: "ComboOverlap", defaultPrefix: "score", outPrefix: "mixfonts/combo", glyphs: SCORE_GLYPHS },
     ini: {},
   },
   {
-    id: "hud",
-    label: "HUD extras",
-    group: "HUD",
-    hint: "Key overlay, countdown, skip, section pass/fail",
-    pattern:
-      /^(inputoverlay-.+|play-skip(-\d+)?|play-unranked|play-warningarrow|arrow-pause|arrow-warning|section-pass|section-fail|count[123]|go|ready|comboburst(-\d+)?|masking-border)$/,
+    id: "keyoverlay",
+    label: "Key overlay",
+    section: "In-game interface",
+    hint: "The key press counters at the side",
+    pattern: /^inputoverlay-.+$/,
     ini: { Colours: ["InputOverlayText"] },
   },
   {
+    id: "countdown",
+    label: "Countdown and skip",
+    section: "In-game interface",
+    hint: "Ready, 3, 2, 1, go, the skip button and warning arrows",
+    pattern: /^(count[123]|go|ready|play-skip(-\d+)?|play-unranked|play-warningarrow|arrow-pause|arrow-warning|masking-border)$/,
+    ini: {},
+  },
+  {
+    id: "section",
+    label: "Section pass and fail",
+    section: "In-game interface",
+    hint: "Shown at breaks",
+    pattern: /^section-(pass|fail)$/,
+    ini: {},
+  },
+  {
+    id: "pause",
+    label: "Pause and fail",
+    section: "Screens",
+    hint: "Pause and fail overlays and their buttons",
+    pattern: /^(pause-.+|fail-background)$/,
+    ini: {},
+  },
+  {
+    id: "ranking",
+    label: "Results screen",
+    section: "Screens",
+    hint: "Grades, panels and buttons on the results screen",
+    pattern: /^ranking-.+$/,
+    ini: {},
+  },
+  {
+    id: "mods",
+    label: "Mod icons",
+    section: "Screens",
+    hint: "The icon for each mod",
+    pattern: /^selection-mod-.+$/,
+    ini: {},
+  },
+  {
+    id: "songselect",
+    label: "Song select",
+    section: "Screens",
+    hint: "Song select buttons, tabs, stars and scoreboard entries",
+    pattern: /^(selection-.+|menu-back(-\d+)?|menu-button-background|button-.+|star2?|mode-.+|scoreentry-.+|songselect-.+)$/,
+    ini: { Colours: ["SongSelectActiveText", "SongSelectInactiveText"] },
+  },
+  {
+    id: "menus",
+    label: "Menus",
+    section: "Screens",
+    hint: "Main menu and everything else menu-related",
+    pattern: /^(menu-.+|welcome_text|options-offset-tick)$/,
+    ini: { Colours: ["MenuGlow"] },
+  },
+  {
     id: "hitsounds",
-    label: "Hitsounds",
-    group: "Audio",
-    hint: "Hit, slider and spinner samples",
-    audioPattern:
-      /^((normal|soft|drum)-(hit(normal|whistle|finish|clap)|slidertick|sliderslide|sliderwhistle)\d*|spinnerspin|spinnerbonus|combobreak)$/,
+    label: "Hit sounds",
+    section: "Sounds",
+    hint: "Normal, whistle, finish and clap for each sample set",
+    audioPattern: new RegExp(`^${SAMPLE_SET}-hit(normal|whistle|finish|clap)\\d*$`),
     ini: { General: ["LayeredHitSounds"] },
   },
   {
+    id: "slidersounds",
+    label: "Slider sounds",
+    section: "Sounds",
+    hint: "Ticks, slides and whistles",
+    audioPattern: new RegExp(`^${SAMPLE_SET}-slider(tick|slide|whistle)\\d*$`),
+    ini: {},
+  },
+  {
+    id: "spinnersounds",
+    label: "Spinner sounds",
+    section: "Sounds",
+    hint: "Spinning and bonus",
+    audioPattern: /^spinner(spin|bonus)(-max)?$/,
+    ini: {},
+  },
+  {
+    id: "playsounds",
+    label: "Gameplay sounds",
+    section: "Sounds",
+    hint: "Combo break, countdown, section pass and fail, applause",
+    audioPattern: /^(combobreak|comboburst(-\d+)?|sectionpass|sectionfail|failsound|applause|count[123]s|gos|readys|pause-loop|nightcore-.+)$/,
+    ini: {},
+  },
+  {
     id: "uisounds",
-    label: "Other sounds",
-    group: "Audio",
-    hint: "Menu, pass/fail and applause samples",
+    label: "Interface sounds",
+    section: "Sounds",
+    hint: "Menu clicks, hovers and every other sample",
+    ini: {},
+  },
+  {
+    id: "taiko",
+    label: "osu!taiko",
+    section: "Other game modes",
+    hint: "Drum, notes and Pippidon",
+    pattern: /^(taiko-?.+|taikobigcircle.*|taikohitcircle.*|pippidon.+)$/,
+    audioPattern: /^taiko-.+$/,
+    ini: {},
+  },
+  {
+    id: "catch",
+    label: "osu!catch",
+    section: "Other game modes",
+    hint: "Fruit and the catcher",
+    pattern: /^fruit-.+$/,
+    ini: {},
+  },
+  {
+    id: "mania",
+    label: "osu!mania",
+    section: "Other game modes",
+    hint: "Keys, notes and stage",
+    pattern: /^mania-.+$/,
     ini: {},
   },
   {
     id: "other",
-    label: "Interface & the rest",
-    group: "Everything else",
-    hint: "Menus, ranking screen, mod icons, other game modes",
+    label: "Other files",
+    section: "Everything else",
+    hint: "Files in folders, and anything the mixer doesn't recognise",
     ini: {},
   },
-];
+]);
 
-export const CATEGORY_BY_ID = new Map(CATEGORIES.map((c) => [c.id, c]));
+export type CategoryDef = (typeof CATEGORIES)[number] extends Def<infer Id> ? Def<Id> : never;
+export type CategoryId = CategoryDef["id"];
+
+export const CATEGORY_BY_ID = new Map<CategoryId, CategoryDef>(CATEGORIES.map((c) => [c.id, c]));
 
 /** Every skin.ini key owned by a specific category, so the remainder can be attributed to "other". */
 export const CLAIMED_INI_KEYS: Record<"general" | "colours" | "fonts", Set<string>> = {
@@ -291,6 +381,7 @@ function classify(file: SkinFile): CategoryId {
       if (category.audioPattern?.test(file.stem)) return category.id;
     }
 
+    // Skins name their interface samples freely, so whatever isn't a known gameplay sample counts as one.
     return "uisounds";
   }
 

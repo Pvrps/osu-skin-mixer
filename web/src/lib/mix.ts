@@ -6,8 +6,17 @@ import { IMAGE_EXTS, type Skin, describeFile } from "./skins";
 /** The id standing in for a skin when something is set to show or play nothing. */
 export const NONE_ID = "none";
 
+/** A skin with nothing in it. Taking an element from it leaves the element out, so the game shows its own. */
+export const DEFAULT_ID = "default";
+
+export const DEFAULT_SKIN: Skin = { id: DEFAULT_ID, name: "Game default", creator: "", files: [], ini: [] };
+
 export interface Selection {
-  /** The skin every category comes from unless overridden. */
+  /** What the mix skin is called in game. */
+  name: string;
+  /** The skin in the game which this mix was last written to, once it has been. */
+  skinId: string | null;
+  /** The skin the mix started out as a copy of. Everything comes from it unless changed. */
   base: string | null;
   overrides: Partial<Record<CategoryId, string>>;
   /** Individual elements taken from a different skin than the rest of their category. */
@@ -18,7 +27,7 @@ export interface Selection {
   ini: Record<string, string>;
 }
 
-export const EMPTY_SELECTION: Selection = { base: null, overrides: {}, elements: {}, recolours: {}, ini: {} };
+export const EMPTY_SELECTION: Selection = { name: "", skinId: null, base: null, overrides: {}, elements: {}, recolours: {}, ini: {} };
 
 export interface MixFile {
   name: string;
@@ -78,7 +87,7 @@ const lowerName = (name: string) => name.replace(/\\/g, "/").toLowerCase();
  *
  * Returns null until a base skin has been chosen.
  */
-export function computeMix(sources: Skin[], selection: Selection, mixName: string, existingMix?: Skin | null, recoloured?: RecolourLookup): Mix | null {
+export function computeMix(sources: Skin[], selection: Selection, existingMix?: Skin | null, recoloured?: RecolourLookup): Mix | null {
   const byId = new Map(sources.map((s) => [s.id, s]));
   const chosen = new Map<CategoryId, Skin>();
 
@@ -143,7 +152,7 @@ export function computeMix(sources: Skin[], selection: Selection, mixName: strin
     }
   }
 
-  const ini = buildIni(chosen, selection, mixName);
+  const ini = buildIni(chosen, byId.get(selection.base!)!, selection);
 
   return {
     files: [...files.values()].sort((a, b) => a.name.localeCompare(b.name)),
@@ -154,17 +163,17 @@ export function computeMix(sources: Skin[], selection: Selection, mixName: strin
   };
 }
 
-function buildIni(chosen: Map<CategoryId, Skin>, selection: Selection, mixName: string): IniSection[] {
+function buildIni(chosen: Map<CategoryId, Skin>, base: Skin, selection: Selection): IniSection[] {
   const general = new Map<string, string>([
-    ["Name", mixName],
+    ["Name", selection.name],
     ["Author", "osu-skin-mixer"],
   ]);
   const colours = new Map<string, string>();
   const fonts = new Map<string, string>();
 
-  const rest = chosen.get("other")!.ini;
+  const rest = base.ini;
 
-  // Anything not owned by a category (version, animation framerate, ...) follows the "everything else" skin.
+  // Anything not owned by a category (version, animation framerate, other game modes, ...) stays as the mix started.
   copyUnclaimed(rest, "General", CLAIMED_INI_KEYS.general, general);
   copyUnclaimed(rest, "Colours", CLAIMED_INI_KEYS.colours, colours);
   copyUnclaimed(rest, "Fonts", CLAIMED_INI_KEYS.fonts, fonts);
@@ -257,7 +266,6 @@ export function mixAsSkin(mix: Mix, name: string): Skin {
     id: "preview",
     name,
     creator: "",
-    isMix: true,
     files: mix.files.map((f) => describeFile(f.name, f.hash)),
     ini: mix.ini,
   };
