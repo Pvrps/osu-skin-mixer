@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { confirm } from "./components/Confirm";
 import { type EditorFile, ImageEditor } from "./components/ImageEditor";
 import { IniEditor } from "./components/IniEditor";
 import { type Hover, Inspector } from "./components/Inspector";
@@ -378,10 +379,18 @@ export function App() {
         <button
           className="quiet"
           title="Set this mix aside and begin a new one"
-          onClick={() => {
-            if (window.confirm(`Start a new mix? "${selection.name}" stays in osu! as it was last applied, but can no longer be edited here.`)) {
+          onClick={async () => {
+            const sure = await confirm({
+              title: "Start a new mix?",
+              detail: `"${selection.name}" stays in osu! as it was last applied, but can no longer be changed from here.`,
+              confirm: "Start a new mix",
+              destructive: true,
+            });
+
+            if (sure) {
               update(() => EMPTY_SELECTION);
               setShowIni(false);
+              setEditing(null);
             }
           }}
         >

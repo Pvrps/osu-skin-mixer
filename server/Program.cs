@@ -66,6 +66,18 @@ if (Environment.GetEnvironmentVariable("MIXER_LOG_REQUESTS") == "1")
     });
 }
 
+// The page is only ever asked for by its local address. A request naming anything else has been steered here by
+// some other site, which must not be able to reach the user's osu! data.
+app.Use(async (context, next) =>
+{
+    string host = context.Request.Host.Host;
+
+    if (host is "127.0.0.1" or "localhost" or "[::1]")
+        await next();
+    else
+        context.Response.StatusCode = StatusCodes.Status403Forbidden;
+});
+
 app.Use(async (context, next) =>
 {
     try

@@ -19,6 +19,7 @@ import {
 import { saveEdited } from "../lib/api";
 import type { Recolour } from "../lib/recolour";
 import { fileUrl } from "../lib/skins";
+import { confirm } from "./Confirm";
 import { FloatingWindow } from "./FloatingWindow";
 
 /** One image of the element being edited. An element can have several: its `@2x` version, and animation frames. */
@@ -808,14 +809,16 @@ export function ImageEditor({ title, files, recolour, onSave, onRevert, onClose 
     }
   };
 
-  const confirmDiscard = () => !dirty || window.confirm("Discard the changes you haven't saved?");
+  const confirmDiscard = async () =>
+    !dirty || (await confirm({ title: "Discard your changes?", detail: `What you've done to ${file.name} since it was last saved will be lost.`, confirm: "Discard", destructive: true }));
 
-  const close = () => {
-    if (confirmDiscard()) onClose();
+  const close = async () => {
+    if (await confirmDiscard()) onClose();
   };
 
-  const revert = () => {
-    if (!window.confirm(`Go back to the original ${file.name}? Every edit made to it is thrown away.`)) return;
+  const revert = async () => {
+    const sure = await confirm({ title: `Go back to the original ${file.name}?`, detail: "Every edit made to it is thrown away.", confirm: "Revert", destructive: true });
+    if (!sure) return;
 
     onRevert(file.original);
     if (standard && alsoStandard) onRevert(standard.original);
@@ -929,7 +932,7 @@ export function ImageEditor({ title, files, recolour, onSave, onRevert, onClose 
       height={700}
       minWidth={760}
       minHeight={480}
-      onClose={close}
+      onClose={() => void close()}
     >
       <div className="editor">
         <div className="editor-toolbar">
@@ -960,8 +963,9 @@ export function ImageEditor({ title, files, recolour, onSave, onRevert, onClose 
               aria-label="Which image of this element to edit"
               title="This element is made of several images"
               value={fileIndex}
-              onChange={(e) => {
-                if (confirmDiscard()) setFileIndex(Number(e.target.value));
+              onChange={async (e) => {
+                const chosen = Number(e.target.value);
+                if (await confirmDiscard()) setFileIndex(chosen);
               }}
             >
               {files.map((f, i) => (
@@ -973,7 +977,7 @@ export function ImageEditor({ title, files, recolour, onSave, onRevert, onClose 
           )}
 
           {edited && (
-            <button className="quiet" disabled={busy} title="Throw away every edit made to this image" onClick={revert}>
+            <button className="quiet" disabled={busy} title="Throw away every edit made to this image" onClick={() => void revert()}>
               Revert to original
             </button>
           )}
