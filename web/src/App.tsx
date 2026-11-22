@@ -5,11 +5,13 @@ import { Preview } from "./components/Preview";
 import { applyMix, fetchDefaultIndex, fetchState, saveSelection } from "./lib/api";
 import { CATEGORIES, CATEGORY_BY_ID, type CategoryId } from "./lib/categories";
 import { type Selection, computeMix, isApplied, mixAsSkin, sourceFor } from "./lib/mix";
+import { type BlankHashes, NONE_ID, buildNoneSkin, canBeNone } from "./lib/none";
 import { type Skin, loadSkin } from "./lib/skins";
 
 interface Loaded {
   mixName: string;
   osuDir: string;
+  blank: BlankHashes;
   sources: Skin[];
   mix: Skin | null;
 }
@@ -24,7 +26,9 @@ function sanitise(saved: Partial<Selection> | null, sources: Skin[]): Selection 
   const overrides: Selection["overrides"] = {};
 
   for (const [category, skinId] of Object.entries(saved?.overrides ?? {})) {
-    if (CATEGORY_BY_ID.has(category as CategoryId) && typeof skinId === "string" && known.has(skinId)) overrides[category as CategoryId] = skinId;
+    if (!CATEGORY_BY_ID.has(category as CategoryId) || typeof skinId !== "string") continue;
+
+    if (known.has(skinId) || (skinId === NONE_ID && canBeNone(category as CategoryId))) overrides[category as CategoryId] = skinId;
   }
 
   const ini: Record<string, string> = {};
@@ -42,7 +46,7 @@ async function load(): Promise<{ loaded: Loaded; selection: Selection }> {
   const sources = skins.filter((s) => !s.isMix).sort((a, b) => a.name.localeCompare(b.name));
 
   return {
-    loaded: { mixName: state.mixName, osuDir: state.osuDir, sources, mix: skins.find((s) => s.isMix) ?? null },
+    loaded: { mixName: state.mixName, osuDir: state.osuDir, blank: state.blank, sources, mix: skins.find((s) => s.isMix) ?? null },
     selection: sanitise(state.selection, sources),
   };
 }
@@ -86,10 +90,15 @@ export function App() {
     return () => clearTimeout(timer);
   }, [selection]);
 
-  const skinsById = useMemo(() => new Map((loaded?.sources ?? []).map((s) => [s.id, s])), [loaded]);
+  // "None" is mixed in as a skin made of blank files. It can supply any category but can never be the base.
+  const noneSkin = useMemo(() => (loaded && defaults ? buildNoneSkin(loaded.sources, defaults, loaded.blank) : null), [loaded, defaults]);
+  const mixable = useMemo(() => (loaded ? (noneSkin ? [...loaded.sources, noneSkin] : loaded.sources) : []), [loaded, noneSkin]);
+  const skinsById = useMemo(() => new Map(mixable.map((s) => [s.id, s])), [mixable]);
 
   const colourOf = useCallback(
     (skinId: string) => {
+      if (skinId === NONE_ID) return "#8b8898";
+
       const index = Math.max(0, (loaded?.sources ?? []).findIndex((s) => s.id === skinId));
       return `hsl(${(index * 137.5 + 265) % 360} 75% 68%)`;
     },
@@ -97,14 +106,14 @@ export function App() {
   );
 
   const mix = useMemo(
-    () => (loaded && selection ? computeMix(loaded.sources, selection, loaded.mixName, loaded.mix) : null),
-    [loaded, selection],
+    () => (loaded && selection ? computeMix(mixable, selection, loaded.mixName, loaded.mix) : null),
+    [loaded, selection, mixable],
   );
 
   // What each setting would be without manual values, shown as the placeholder in the settings panel.
   const inherited = useMemo(
-    () => (loaded && selection ? (computeMix(loaded.sources, { ...selection, ini: {} }, loaded.mixName, loaded.mix)?.ini ?? []) : []),
-    [loaded, selection],
+    () => (loaded && selection ? (computeMix(mixable, { ...selection, ini: {} }, loaded.mixName, loaded.mix)?.ini ?? []) : []),
+    [loaded, selection, mixable],
   );
 
   // Hovering a skin's card shows what the mix would look like with it, without committing to anything.
@@ -113,13 +122,15 @@ export function App() {
 
     const shown =
       hover && hover !== sourceFor(selection, category, skinsById)?.id
-        ? computeMix(loaded.sources, { ...selection, overrides: { ...selection.overrides, [category]: hover } }, loaded.mixName, loaded.mix)
+        ? computeMix(mixable, { ...selection, overrides: { ...selection.overrides, [category]: hover } }, loaded.mixName, loaded.mix)
         : mix;
 
     return shown ? mixAsSkin(shown, loaded.mixName) : null;
-  }, [loaded, selection, hover, category, skinsById, mix]);
+  }, [loaded, selection, hover, category, skinsById, mix, mixable]);
 
-  const dirty = mix !== null && !isApplied(mix, loaded?.mix);
+  // Until the list of built-in elements has arrived, a "none" in the selection can't be resolved, so hold off judging.
+  const usesNone = selection !== null && Object.values(selection.overrides).includes(NONE_ID);
+  const dirty = mix !== null && (!usesNone || noneSkin !== null) && !isApplied(mix, loaded?.mix);
 
   const update = (change: (s: Selection) => Selection) => {
     setSelection((s) => (s ? change(s) : s));
@@ -299,6 +310,7 @@ export function App() {
             <AssetBrowser
               category={current}
               skins={loaded.sources}
+              none={canBeNone(category) ? noneSkin : null}
               selected={currentSource?.id ?? null}
               base={selection.base}
               colourOf={colourOf}

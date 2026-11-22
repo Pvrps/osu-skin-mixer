@@ -11,6 +11,7 @@ export interface RawSkin {
 export interface AppState {
   mixName: string;
   osuDir: string;
+  blank: { png: string; wav: string };
   skins: RawSkin[];
   selection: Partial<Selection> | null;
 }

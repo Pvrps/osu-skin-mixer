@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { iniValue, parseIni, serializeIni } from "./ini";
 import { computeMix, isApplied, mixAsSkin } from "./mix";
+import { NONE_ID, buildNoneSkin } from "./none";
 import { type Skin, describeFile } from "./skins";
 
 function skin(id: string, ini: string, files: string[]): Skin {
@@ -63,6 +64,22 @@ describe("computeMix", () => {
     expect(iniValue(mix.ini, "Colours", "SliderBorder")).toBe("1,1,1");
     // b sets no overlap, so a's must not carry over to b's glyphs.
     expect(iniValue(mix.ini, "Fonts", "HitCircleOverlap")).toBeUndefined();
+  });
+
+  it("blanks every element of a category set to none", () => {
+    const none = buildNoneSkin([a, b], new Set(["cursormiddle@2x.png", "spinnerbonus.wav", "menu-button@2x.png"]), { png: "P", wav: "W" });
+    const mix = computeMix([a, b, none], { base: "a", overrides: { cursor: NONE_ID, hitsounds: NONE_ID, numbers: NONE_ID }, ini: {} }, "mix")!;
+    const byName = new Map(mix.files.map((f) => [f.name, f.hash]));
+
+    // Elements from any skin and from the built-in skin are covered, so nothing can show through.
+    for (const name of ["cursor.png", "cursortrail.png", "cursormiddle.png", "mixfonts/hitcircle-0.png"]) expect(byName.get(name)).toBe("P");
+    for (const name of ["normal-hitnormal.wav", "spinnerbonus.wav"]) expect(byName.get(name)).toBe("W");
+
+    expect(byName.has("cursor@2x.png")).toBe(false);
+    expect(byName.get("hitcircle.png")).toBe("a:hitcircle.png");
+    expect(byName.get("menu-back.png")).toBe("a:menu-back.png");
+    expect(byName.has("menu-button.png")).toBe(false);
+    expect(iniValue(mix.ini, "General", "CursorRotate")).toBeUndefined();
   });
 
   it("recognises an already applied mix", () => {

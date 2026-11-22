@@ -124,15 +124,25 @@ public partial class OsuStore(string osuDir, string mixName, string stateDir)
 
         lock (writeLock)
         {
-            // The configuration is the only new content this tool ever adds to the file store.
+            // The configuration is new content, so it has to be added to the file store...
             byte[] iniBytes = Encoding.UTF8.GetBytes(request.SkinIni);
             string iniHash = Convert.ToHexStringLower(SHA256.HashData(iniBytes));
             writeToStore(iniHash, iniBytes);
+
+            // ...along with the blank stand-ins, the first time a part of the skin is set to "none".
+            foreach (string hash in request.Files.Select(f => f.Hash).Distinct())
+            {
+                if (BlankFiles.Get(hash) is byte[] blank)
+                    writeToStore(hash, blank);
+            }
 
             using var realm = open(readOnly: false);
 
             foreach (var f in request.Files)
             {
+                if (BlankFiles.Get(f.Hash) != null)
+                    continue;
+
                 if (realm.DynamicApi.Find("File", f.Hash) == null || !File.Exists(GetStoragePath(f.Hash)))
                     throw new UserFacingException($"{f.Name} points at a file which is not in the osu! file store. Refresh and try again.");
             }
@@ -168,7 +178,7 @@ public partial class OsuStore(string osuDir, string mixName, string stateDir)
                 addUsage("skin.ini", iniFile);
 
                 foreach (var f in request.Files)
-                    addUsage(f.Name, realm.DynamicApi.Find("File", f.Hash)!);
+                    addUsage(f.Name, realm.DynamicApi.Find("File", f.Hash) ?? realm.DynamicApi.CreateObject("File", f.Hash));
 
                 skin.DynamicApi.Set("Hash", computeHash(request.Files.Append(new SkinFileDto("skin.ini", iniHash))));
                 count = files.Count;

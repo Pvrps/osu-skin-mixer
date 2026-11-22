@@ -7,6 +7,8 @@ import { AUDIO_EXTS, IMAGE_EXTS, type Skin, fileUrl } from "../lib/skins";
 interface Props {
   category: CategoryDef;
   skins: Skin[];
+  /** The stand-in for showing or playing nothing, where this category allows it. */
+  none: Skin | null;
   /** The skin currently supplying this category. */
   selected: string | null;
   base: string | null;
@@ -159,7 +161,49 @@ function Card({ category, skin, selected, isBase, colour, onSelect, onHover }: {
   );
 }
 
-export function AssetBrowser({ category, skins, selected, base, colourOf, onSelect, onHover }: Props) {
+function NoneCard({ category, skin, selected, colour, onSelect, onHover }: {
+  category: CategoryDef;
+  skin: Skin;
+  selected: boolean;
+  colour: string;
+  onSelect: () => void;
+  onHover: (hovering: boolean) => void;
+}) {
+  const count = categoriesOf(skin).get(category.id)!.length;
+  const silent = category.group === "Audio";
+
+  return (
+    <div
+      className={`card none${selected ? " selected" : ""}`}
+      style={{ "--skin": colour } as React.CSSProperties}
+      onMouseEnter={() => onHover(true)}
+      onMouseLeave={() => onHover(false)}
+      onClick={onSelect}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelect();
+        }
+      }}
+    >
+      <div className="card-head">
+        <span className="dot" />
+        <span className="card-name">None</span>
+        {selected && <span className="tag in-use">in use</span>}
+      </div>
+      <div className="card-empty">
+        {silent ? "Plays nothing. Every sample here is replaced with silence." : "Shows nothing. Every image here is replaced with an invisible one."}
+      </div>
+      <div className="card-foot">
+        {count} blank file{count === 1 ? "" : "s"}
+      </div>
+    </div>
+  );
+}
+
+export function AssetBrowser({ category, skins, none, selected, base, colourOf, onSelect, onHover }: Props) {
   return (
     <div className="cards">
       {skins.map((skin) => (
@@ -174,6 +218,16 @@ export function AssetBrowser({ category, skins, selected, base, colourOf, onSele
           onHover={(hovering) => onHover(hovering ? skin.id : null)}
         />
       ))}
+      {none && (
+        <NoneCard
+          category={category}
+          skin={none}
+          selected={selected === none.id}
+          colour={colourOf(none.id)}
+          onSelect={() => onSelect(none.id)}
+          onHover={(hovering) => onHover(hovering ? none.id : null)}
+        />
+      )}
     </div>
   );
 }

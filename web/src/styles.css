@@ -349,6 +349,10 @@ main {
   background: var(--raised);
 }
 
+.card.none {
+  border-style: dashed;
+}
+
 .card-head {
   display: flex;
   align-items: center;

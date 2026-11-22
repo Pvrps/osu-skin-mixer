@@ -29,6 +29,8 @@ lazer keeps skins in its Realm database (`client.realm`) as lists of filename â†
 - A copy of `client.realm` is saved to the state directory before every apply (newest three are kept).
 - Font glyphs are stored under `mixfonts/` in the mix so number fonts from different skins cannot clash.
 - HUD layouts you edit in lazer's own skin editor while on the mix skin are kept across applies.
+- Any category except combo colours and the interface can be set to **None**, which fills it with invisible 1Ã—1
+  images or silent samples so nothing shows through from the game's built-in skin.
 - Elements a skin leaves out fall back to lazer's classic skin, in the preview as in the game. Those images are
   downloaded from [ppy/osu-resources](https://github.com/ppy/osu-resources) the first time they are needed.
 

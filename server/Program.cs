@@ -49,6 +49,7 @@ app.MapGet("/api/state", () => new
 {
     mixName,
     osuDir,
+    blank = new { png = BlankFiles.PngHash, wav = BlankFiles.WavHash },
     skins = store.GetSkins(),
     selection = File.Exists(selectionPath) ? JsonSerializer.Deserialize<JsonElement>(File.ReadAllText(selectionPath)) : (JsonElement?)null,
 });
@@ -70,12 +71,20 @@ app.MapGet("/api/file/{hash}/{*name}", (string hash, string? name, HttpContext c
     if (!OsuStore.IsValidHash(hash))
         return Results.BadRequest();
 
+    context.Response.Headers.CacheControl = "public, max-age=31536000, immutable";
+
+    // The stand-ins for "none" may not have been written to the store yet.
+    if (BlankFiles.Get(hash) is byte[] blank)
+        return Results.Bytes(blank, contentTypeFor(name));
+
     string path = store.GetStoragePath(hash);
 
     if (!File.Exists(path))
+    {
+        context.Response.Headers.CacheControl = "no-store";
         return Results.NotFound();
+    }
 
-    context.Response.Headers.CacheControl = "public, max-age=31536000, immutable";
     return Results.File(path, contentTypeFor(name));
 });
 
